@@ -5,7 +5,6 @@
 #include "LoaderInfo.h"
 #include "OSResetSystemPatchCode.h"
 #include "ExitComboPatchCode.h"
-#include "../arm7/ExitComboArm7PatchCode.h"
 #include "ExitComboPatch.h"
 
 // ExitComboPatchCode.s reaches resetParam and the sdk card lock word from the exit
@@ -75,84 +74,37 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     // Everything this patch takes from the patch heap, in the order it is taken
     // below. It only gets what the mandatory patches left, and all of it or
     // nothing: Alloc halts when nothing fits, so the whole sequence is tried first.
-    // The hold piece (RTS step 1 freeze test) is tried first and dropped when
-    // the exit only fits without it.
-    u32 sizes[] =
+    const u32 sizes[] =
     {
         // OSResetSystemPatch::EmitRebootCode
         sizeof(loader_info_t),
         SECTION_SIZE(patch_osresetsystem_boot),
         SECTION_SIZE(patch_osresetsystem),
         // each piece before the one that jumps to it
-        SECTION_SIZE(patch_exitcombo_hold),
         SECTION_SIZE(patch_exitcombo_teardown),
         SECTION_SIZE(patch_exitcombo_wait),
         SECTION_SIZE(patch_exitcombo_check),
         SECTION_SIZE(patch_exitcombo_hook)
     };
     constexpr u32 sizeCount = sizeof(sizes) / sizeof(sizes[0]);
-    constexpr u32 holdIndex = 3;
+    u32 first = emitRebootCode ? 0 : 3;
     void* addresses[sizeCount];
     auto& patchHeap = patchContext.GetPatchHeap();
-    bool withHold = false;
-    u32 first = 0;
-    for (u32 attempt = 0; attempt < 2 && !withHold; attempt++)
+    if (!patchHeap.CanAllocInOrder(&sizes[first], sizeCount - first, &addresses[first]))
     {
-        // attempt 0 with the hold piece, attempt 1 without
-        bool tryHold = attempt == 0;
-        u32 sizesTry[sizeCount];
-        u32 count = 0;
-        for (u32 i = emitRebootCode ? 0 : 3; i < sizeCount; i++)
-        {
-            if (i != holdIndex || tryHold)
-                sizesTry[count++] = sizes[i];
-        }
+        LOG_DEBUG("No room for the exit combo\n");
+        return;
+    }
 
-        void* addressesTry[sizeCount];
-        if (!patchHeap.CanAllocInOrder(sizesTry, count, addressesTry))
+    // The mandatory patches took what they needed already; this takes more of the
+    // same gaps, so leave the exit out rather than write over a romhack's code.
+    for (u32 i = first; i < sizeCount; i++)
+    {
+        if (HoldsArmBranch(addresses[i], sizes[i]))
         {
-            if (!tryHold)
-            {
-                LOG_DEBUG("No room for the exit combo\n");
-                return;
-            }
-            continue;
+            LOG_DEBUG("Exit combo space holds code, left out\n");
+            return;
         }
-
-        // The mandatory patches took what they needed already; this takes more of the
-        // same gaps, so leave the exit out rather than write over a romhack's code.
-        bool holdsCode = false;
-        for (u32 i = 0; i < count; i++)
-        {
-            if (HoldsArmBranch(addressesTry[i], sizesTry[i]))
-                holdsCode = true;
-        }
-        if (holdsCode)
-        {
-            if (!tryHold)
-            {
-                LOG_DEBUG("Exit combo space holds code, left out\n");
-                return;
-            }
-            continue;
-        }
-
-        // lay the result out like sizes[], with the hold piece's size 0 when left out
-        first = emitRebootCode ? 0 : 3;
-        count = 0;
-        for (u32 i = first; i < sizeCount; i++)
-        {
-            if (i != holdIndex || tryHold)
-                addresses[i] = addressesTry[count++];
-            else
-            {
-                addresses[i] = nullptr;
-                sizes[i] = 0;
-            }
-        }
-        withHold = tryHold;
-        if (!tryHold)
-            break;
     }
 
     // Keep what the game has where all of it goes, to put it back should the arm7
@@ -166,8 +118,6 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     savedWords = 0;
     for (u32 i = first; i < sizeCount; i++)
     {
-        if (sizes[i] == 0)
-            continue;
         _savedRegionAddress[_savedRegionCount] = (u32)addresses[i];
         _savedRegionSize[_savedRegionCount++] = sizes[i];
         for (u32 j = 0; j < sizes[i] / 4; j++)
@@ -187,26 +137,21 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
         blockAddress -= 0x800000;
     }
 
-    const ExitComboHoldPatchCode* hold = withHold
-        ? patchCodes.AddUniquePatchCode<ExitComboHoldPatchCode>(patchHeap)
-        : nullptr;
     auto teardown = patchCodes.AddUniquePatchCode<ExitComboTeardownPatchCode>(patchHeap,
         rebootCode->GetPoolAtTarget(), rebootCode->GetBootLoaderBinariesFunction());
-    auto wait = patchCodes.AddUniquePatchCode<ExitComboWaitPatchCode>(patchHeap, teardown, hold);
+    auto wait = patchCodes.AddUniquePatchCode<ExitComboWaitPatchCode>(patchHeap, teardown);
     auto check = patchCodes.AddUniquePatchCode<ExitComboCheckPatchCode>(patchHeap, wait);
     auto hook = patchCodes.AddUniquePatchCode<ExitComboHookPatchCode>(patchHeap, blockAddress, check,
         _dispatchTail[4],  // irq table address literal
-        _dispatchTail[5],  // irq return address literal
-        withHold);
+        _dispatchTail[5]); // irq return address literal
 
     LOG_DEBUG("Exit combo hook 0x%p, check 0x%p, wait 0x%p, teardown 0x%p\n", hook->GetEntryFunction(),
         check->GetEntryFunction(), wait->GetEntryFunction(), teardown->GetEntryFunction());
     // Each entry is the start of its piece, so this only fails if Alloc ever stops
     // doing what CanAllocInOrder does. The pieces are copied in anyway, but without
     // the hook nothing reaches them, and what was saved is not what they cover.
-    if ((hold && hold->GetEntryFunction() != addresses[3]) ||
-        teardown->GetEntryFunction() != addresses[4] || wait->GetEntryFunction() != addresses[5] ||
-        check->GetEntryFunction() != addresses[6] || hook->GetEntryFunction() != addresses[7])
+    if (teardown->GetEntryFunction() != addresses[3] || wait->GetEntryFunction() != addresses[4] ||
+        check->GetEntryFunction() != addresses[5] || hook->GetEntryFunction() != addresses[6])
     {
         LOG_WARNING("Exit combo pieces not where planned, left out\n");
         delete[] _savedGameWords;
@@ -220,13 +165,21 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     _dispatchTail[0] = 0xE51FF004; // ldr pc,= address
     _dispatchTail[1] = _hookEntry;
     _installed = 1;
-
-    // the arm7 half offers the freeze combo only when the hold piece is in
-    patch_exitcombo_arm7_freeze_magic = withHold ? EXIT_REQUEST_FREEZE_COMBO_MAGIC : 0;
-    if (withHold)
-        LOG_DEBUG("Freeze test combo enabled, hold 0x%p\n", hold->GetEntryFunction());
+    _waitHoldLiteral = wait->GetHoldAddressLiteral();
+    _hookFreezeMagicLiteral = hook->GetFreezeMagicLiteral();
 
     LOG_DEBUG("Exit combo enabled\n");
+}
+
+void ExitComboPatch::EnableFreeze(u32 holdAddress)
+{
+    if (!_installed)
+        return;
+
+    // The pieces are in the game already, so their literals change in place.
+    *_waitHoldLiteral = holdAddress;
+    *_hookFreezeMagicLiteral = EXIT_REQUEST_FREEZE_COMBO_MAGIC;
+    LOG_DEBUG("Freeze test combo enabled, hold at 0x%X\n", holdAddress);
 }
 
 void ExitComboPatch::Deactivate()

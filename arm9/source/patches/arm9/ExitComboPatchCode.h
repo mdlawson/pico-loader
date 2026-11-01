@@ -44,31 +44,21 @@ public:
     }
 };
 
-/// @brief RTS step 1 test: freezes the game for about a second with both
-///        screens white, then lets the arm7 go and resumes.
-class ExitComboHoldPatchCode : public PatchCode
-{
-public:
-    explicit ExitComboHoldPatchCode(PatchHeap& patchHeap)
-        : PatchCode(SECTION_START(patch_exitcombo_hold), SECTION_SIZE(patch_exitcombo_hold), patchHeap) { }
-
-    const void* GetEntryFunction() const
-    {
-        return GetAddressAtTarget((void*)patch_exitcombo_hold_entry);
-    }
-};
-
 /// @brief Waits for the arm7 to park, hold or cancel.
 class ExitComboWaitPatchCode : public PatchCode
 {
 public:
-    /// @param hold The freeze test piece, or \c nullptr when it is left out.
-    ExitComboWaitPatchCode(PatchHeap& patchHeap, const ExitComboTeardownPatchCode* teardown,
-        const ExitComboHoldPatchCode* hold)
+    ExitComboWaitPatchCode(PatchHeap& patchHeap, const ExitComboTeardownPatchCode* teardown)
         : PatchCode(SECTION_START(patch_exitcombo_wait), SECTION_SIZE(patch_exitcombo_wait), patchHeap)
     {
         patch_exitcombo_wait_teardown_address = (u32)teardown->GetEntryFunction();
-        patch_exitcombo_wait_hold_address = hold ? (u32)hold->GetEntryFunction() : 0;
+        patch_exitcombo_wait_hold_address = 0; // set in place by ExitComboPatch::EnableFreeze
+    }
+
+    /// @brief Where the copy in the game keeps the hold piece's address.
+    u32* GetHoldAddressLiteral() const
+    {
+        return (u32*)GetAddressAtTarget(&patch_exitcombo_wait_hold_address);
     }
 
     const void* GetEntryFunction() const
@@ -99,10 +89,11 @@ class ExitComboHookPatchCode : public PatchCode
 {
 public:
     ExitComboHookPatchCode(PatchHeap& patchHeap, u32 blockAddress, const ExitComboCheckPatchCode* check,
-        u32 irqTableAddress, u32 irqReturnAddress, bool freezeEnabled)
+        u32 irqTableAddress, u32 irqReturnAddress)
         : PatchCode(SECTION_START(patch_exitcombo_hook), SECTION_SIZE(patch_exitcombo_hook), patchHeap)
     {
-        patch_exitcombo_hook_freeze_magic = freezeEnabled ? EXIT_REQUEST_FREEZE_COMBO_MAGIC : 0xFFFFFFFF;
+        // a value the arm7 never publishes, until ExitComboPatch::EnableFreeze
+        patch_exitcombo_hook_freeze_magic = 0xFFFFFFFF;
         patch_exitcombo_hook_block_address = blockAddress;
         patch_exitcombo_hook_check_address = (u32)check->GetEntryFunction();
         patch_exitcombo_hook_table_address = irqTableAddress;
@@ -112,5 +103,11 @@ public:
     const void* GetEntryFunction() const
     {
         return GetAddressAtTarget((void*)patch_exitcombo_hook_entry);
+    }
+
+    /// @brief Where the copy in the game keeps the freeze combo magic it reacts to.
+    u32* GetFreezeMagicLiteral() const
+    {
+        return (u32*)GetAddressAtTarget(&patch_exitcombo_hook_freeze_magic);
     }
 };
