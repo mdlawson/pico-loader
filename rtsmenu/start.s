@@ -25,7 +25,7 @@
 .section .text.start, "ax"
 .global _start
 _start:
-    adr r12, savedRegs
+    adr r12, gSavedRegs
     stmia r12, {r0, r1, r4-r11, lr}
     str sp, [r12, #44]
     ldr sp, =__stack_top
@@ -45,7 +45,7 @@ _start:
     mov r5, r0
 
     // Answer the arm7, then wait for it to take the answer.
-    adr r12, savedRegs
+    adr r12, gSavedRegs
     ldr r1, [r12, #4] // block
     mov r3, #0x04000000
     str r5, [r1, #MENU_STATE]
@@ -105,8 +105,43 @@ leave:
     nop
 
 .balign 4
-savedRegs:
+.global gSavedRegs
+gSavedRegs:
     .space 12 * 4 // r0, r1, r4-r11, lr, sp
+
+// void readBankedRegs(u32* out): spsr_irq, then sp, lr, spsr of svc, abt and
+// und, sp and lr of sys, r8-r12, sp, lr and spsr of fiq. Called in irq mode
+// with irqs off; every mode switch keeps them off.
+.global readBankedRegs
+.type readBankedRegs, %function
+readBankedRegs:
+    mrs r2, cpsr
+    mrs r1, spsr
+    str r1, [r0], #4
+    msr cpsr_c, #0xD3 // svc
+    str sp, [r0], #4
+    str lr, [r0], #4
+    mrs r1, spsr
+    str r1, [r0], #4
+    msr cpsr_c, #0xD7 // abt
+    str sp, [r0], #4
+    str lr, [r0], #4
+    mrs r1, spsr
+    str r1, [r0], #4
+    msr cpsr_c, #0xDB // und
+    str sp, [r0], #4
+    str lr, [r0], #4
+    mrs r1, spsr
+    str r1, [r0], #4
+    msr cpsr_c, #0xDF // sys
+    str sp, [r0], #4
+    str lr, [r0], #4
+    msr cpsr_c, #0xD1 // fiq
+    stmia r0!, {r8-r12, sp, lr}
+    mrs r1, spsr
+    str r1, [r0], #4
+    msr cpsr_c, r2
+    bx lr
 
 .section .rodata.font, "a"
 .balign 4

@@ -263,6 +263,7 @@ void NdsLoader::Load(BootMode bootMode)
                         ErrorDisplay().PrintError("Failed to setup save file.");
                         return;
                     }
+                    SetupRtsStateFile();
                 }
 
                 HandleAntiPiracy();
@@ -932,6 +933,95 @@ void NdsLoader::SetupRealTimeSave(rts_info_t& rts)
     {
         f_write(&file, status, strlen(status), &bytesWritten);
         f_close(&file);
+    }
+}
+
+// The save state file of slot 1 for this game, once the rts is on: made as one
+// run of clusters like the stash. The game code names it; anything that is not
+// a letter or digit becomes '_'. A soft reset keeps what the first boot found.
+void NdsLoader::SetupRtsStateFile()
+{
+    auto& rts = TWL_SHARED_MEMORY->exitRequest.rts;
+    if (rts.magic != RTS_INFO_MAGIC)
+    {
+        return;
+    }
+    char path[48];
+    char code[5];
+    for (int i = 0; i < 4; i++)
+    {
+        char c = (char)(_romHeader.gameCode >> (8 * i));
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        code[i] = ok ? c : '_';
+    }
+    code[4] = 0;
+    mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s-1.rts", code);
+
+    const char* problem = nullptr;
+    u32 sector = 0;
+    FRESULT dirResult = f_mkdir(RTS_STATE_DIRECTORY);
+    auto file = std::make_unique<FIL>();
+    if (dirResult != FR_OK && dirResult != FR_EXIST)
+    {
+        problem = "could not make " RTS_STATE_DIRECTORY;
+    }
+    else if (f_open(file.get(), path, FA_OPEN_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
+    {
+        problem = "could not open or create the state file";
+    }
+    else
+    {
+        if (f_size(file.get()) == RTS_STATE_SIZE)
+        {
+            sector = getContiguousFileSector(file.get());
+        }
+        if (sector == 0)
+        {
+            // a new or broken file: no valid state in it, so nothing is lost
+            if (f_lseek(file.get(), 0) == FR_OK &&
+                f_truncate(file.get()) == FR_OK &&
+                f_expand(file.get(), RTS_STATE_SIZE, 1) == FR_OK &&
+                f_sync(file.get()) == FR_OK)
+            {
+                sector = getContiguousFileSector(file.get());
+                // clear the header sector, so leftovers never pass for a state
+                u8* zero = new u8[512];
+                memset(zero, 0, 512);
+                UINT bytesWritten = 0;
+                if (f_lseek(file.get(), 0) != FR_OK ||
+                    f_write(file.get(), zero, 512, &bytesWritten) != FR_OK || bytesWritten != 512)
+                {
+                    sector = 0;
+                }
+                delete[] zero;
+            }
+            if (sector == 0)
+            {
+                problem = "could not make the state file as one piece (no free run of 5 MB?)";
+            }
+        }
+        f_close(file.get());
+    }
+
+    rts.stateSector = sector;
+    rts.stateSectorCount = sector ? RTS_STATE_SIZE / 512 : 0;
+
+    char status[160];
+    if (problem)
+    {
+        mini_snprintf(status, sizeof(status), "save state: off for %s: %s.\r\n", code, problem);
+    }
+    else
+    {
+        mini_snprintf(status, sizeof(status), "save state: %s at sector %u.\r\n", path, sector);
+    }
+    LOG_DEBUG("Rts: %s", status);
+    FIL statusFile;
+    UINT bytesWritten = 0;
+    if (f_open(&statusFile, RTS_STATUS_PATH, FA_OPEN_APPEND | FA_WRITE) == FR_OK)
+    {
+        f_write(&statusFile, status, strlen(status), &bytesWritten);
+        f_close(&statusFile);
     }
 }
 

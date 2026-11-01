@@ -116,21 +116,36 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 #define RTS_MENU_STATE_EXIT         0x54495845 // 'EXIT'
 #define RTS_MENU_STATE_LEFT         0x5446454C // 'LEFT'
 
+// While the menu runs it can have the arm7 move sectors between the sd card and
+// memory: it fills rts_info_t::cmd*, then sets menuState to one of these; the
+// arm7 answers RTS_MENU_STATE_DONE. Addresses are as the arm7 sees them.
+#define RTS_MENU_STATE_SDREAD       0x44524453 // 'SDRD'
+#define RTS_MENU_STATE_SDWRITE      0x52574453 // 'SDWR'
+#define RTS_MENU_STATE_DONE         0x454E4F44 // 'DONE'
+
+// Save states: one contiguous file per game and slot, made by the loader at boot.
+#define RTS_STATE_DIRECTORY         "/_pico/states"
+#define RTS_STATE_SIZE              0x500000 // layout in rtsmenu/state.h
+
 /// @brief Where the arm7 finds the stash file and the menu on the sd card.
 ///        Both are single contiguous runs of sectors, checked by the loader at boot.
 struct rts_info_t
 {
     u32 magic;          // RTS_INFO_MAGIC when the rest is valid
     u32 base;           // RTS_BASE; the arm9 wait piece jumps here (block + 0x114)
-    u32 stashSector;     // the stash file holds RTS_STASH_SIZE, then the menu
+    u32 stashSector;    // the stash file holds RTS_STASH_SIZE, then the menu
     u32 stashSectorCount;
     u32 menuSector;
     u32 menuSectorCount;
     u32 menuState;      // 0 while the menu runs, then RTS_MENU_STATE_* (block + 0x128)
-    u32 reserved;
+    u32 stateSector;    // slot 1 save state file, 0 when there is none
+    u32 stateSectorCount;
+    u32 cmdSector;      // block + 0x134
+    u32 cmdAddress;     // block + 0x138
+    u32 cmdSectorCount; // block + 0x13C
 };
 
-static_assert(sizeof(rts_info_t) == 0x20);
+static_assert(sizeof(rts_info_t) == 0x30);
 // the arm7 stub stores the menu's exit answer as the exit request as it is
 static_assert(RTS_MENU_STATE_EXIT == EXIT_REQUEST_REQUEST_MAGIC);
 
@@ -162,7 +177,9 @@ struct exit_request_block_t
     rts_info_t rts;
 };
 
-static_assert(sizeof(exit_request_block_t) == 0x130);
+static_assert(sizeof(exit_request_block_t) == 0x140);
+static_assert(offsetof(exit_request_block_t, rts.cmdSector) == 0x134);
+static_assert(offsetof(exit_request_block_t, rts.cmdSectorCount) == 0x13C);
 static_assert(offsetof(exit_request_block_t, rts) == 0x110);
 static_assert(offsetof(exit_request_block_t, rts.base) == 0x114);
 static_assert(offsetof(exit_request_block_t, rts.menuState) == 0x128);

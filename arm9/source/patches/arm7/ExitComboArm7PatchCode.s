@@ -284,10 +284,31 @@ hold:
     // leave: it says LEFT with the last instructions it runs from the stash.
     adrl r1, menuWait
     bl copyWramWait
-    mov r1, r4
+    mov r7, r0 // the wait loop in wram
     mov r2, #0
+menuCommand:
+    // r2 = the menu state last seen
+    mov r1, r4
     mov lr, pc
-    bx r0 // returns the answer in r0
+    bx r7 // returns the new menu state in r0
+    // Sector moves the menu asks for (save states), until it answers.
+    ldr r3, menuStateSdWrite
+    cmp r0, r3
+    ldreq r3, patch_exitcombo_arm7_sdwrite_address
+    beq 1f
+    ldr r3, menuStateSdRead
+    cmp r0, r3
+    bne menuAnswered
+    ldr r3, patch_exitcombo_arm7_sdread_address
+1:
+    ldr r0, [r4, #0x134] // rts.cmdSector
+    ldr r1, [r4, #0x138] // rts.cmdAddress
+    ldr r2, [r4, #0x13C] // rts.cmdSectorCount
+    bl callThumb
+    ldr r2, menuStateDone
+    str r2, [r4, #0x128] // rts.menuState
+    b menuCommand
+menuAnswered:
     mov r6, r0
     ldr r2, freezeComboMagic
     str r2, [r4, #0x0C] // off RUN: the menu may leave
@@ -539,6 +560,15 @@ rtsInfoMagic:
 
 menuStateExit:
     .word 0x54495845 // RTS_MENU_STATE_EXIT
+
+menuStateSdRead:
+    .word 0x44524453 // RTS_MENU_STATE_SDREAD
+
+menuStateSdWrite:
+    .word 0x52574453 // RTS_MENU_STATE_SDWRITE
+
+menuStateDone:
+    .word 0x454E4F44 // RTS_MENU_STATE_DONE
 
 pathMagic:
     .word 0x58454C50 // EXIT_REQUEST_PATH_MAGIC

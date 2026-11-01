@@ -1,0 +1,77 @@
+#pragma once
+// Save state file layout, version 1. One file per game and slot, RTS_STATE_SIZE
+// (common/sharedMemory.h) bytes, made contiguous by the loader. Offsets are bytes
+// from the start of the file, all sector aligned. The header is written last:
+// a state is valid only when its magic and version match.
+
+#include <stdint.h>
+
+#define STATE_MAGIC             0x53545250 // 'PRTS'
+#define STATE_VERSION           1
+
+#define STATE_HEADER            0x000000 // state_header_t, 0x200
+#define STATE_ARM9_IO           0x000200 // 0x1100: 0x04000000-0x04000FFF, then 0x04001000-0x040010FF;
+                                         // only the readable registers, the rest is 0
+#define STATE_ARM9_IO_SIZE      0x1100
+#define STATE_ARM7_IO           0x001400 // 0x400, reserved for the arm7's registers
+#define STATE_ITCM              0x004000 // 0x8000, read at 0x01FF8000
+#define STATE_DTCM              0x00C000 // 0x4000, read at the dtcm base
+#define STATE_PALETTE           0x010000 // 0x800, 0x05000000
+#define STATE_OAM               0x010800 // 0x800, 0x07000000
+#define STATE_SHARED_WRAM       0x011000 // 0x8000, both halves in order whoever owns them
+#define STATE_ARM7_WRAM         0x019000 // 0x10000, 0x03800000
+#define STATE_VRAM              0x029000 // 0xA4000: banks A-I in order, each in full
+#define STATE_MAIN_RAM          0x100000 // 0x400000, 0x02000000
+#define STATE_END               0x500000
+
+typedef struct
+{
+    uint32_t magic;
+    uint32_t version;
+    uint32_t headerSize;
+    uint32_t gameCode;
+    char title[12];
+    uint32_t blockAddress;      // exit_request_block_t in this game's mirror
+
+    // the arm9 as the menu got it from the wait piece (irq mode, irqs off)
+    uint32_t waitEntry;         // r0, where the menu goes back to
+    uint32_t r4_r11[8];
+    uint32_t irqLr;             // back into the hook
+    uint32_t irqSp;
+    uint32_t irqSpsr;
+    uint32_t svc[3];            // sp, lr, spsr
+    uint32_t abt[3];
+    uint32_t und[3];
+    uint32_t sys[2];            // sp, lr
+    uint32_t fiq[8];            // r8-r12, sp, lr, spsr
+
+    // cp15
+    uint32_t control;
+    uint32_t dtcmRegion;
+    uint32_t itcmRegion;
+    uint32_t dataCacheable;
+    uint32_t insnCacheable;
+    uint32_t writeBufferable;
+    uint32_t dataPermissions;
+    uint32_t insnPermissions;
+    uint32_t regions[8];
+
+    // the game's values of the registers the menu changes (the io dump has them too)
+    uint8_t vramcnt[10];        // 0x04000240-0x04000249: A-G, WRAMCNT, H, I
+    uint16_t powcnt1;
+    uint32_t dispcntA;
+    uint32_t dispcntB;
+    uint32_t dispcapcnt;
+    uint32_t masterBrightA;
+    uint32_t masterBrightB;
+    uint16_t backdropB;
+    uint16_t reserved0;
+
+    uint32_t stashBase;         // RTS_BASE; the main ram there comes from the stash file
+    uint32_t stashSize;
+} state_header_t;
+
+_Static_assert(sizeof(state_header_t) <= 0x200, "state header is one sector");
+_Static_assert(STATE_ARM9_IO + STATE_ARM9_IO_SIZE <= STATE_ARM7_IO, "io dump fits");
+_Static_assert(STATE_VRAM + 0xA4000 <= STATE_MAIN_RAM, "vram fits");
+_Static_assert(STATE_MAIN_RAM + 0x400000 == STATE_END, "main ram ends the file");

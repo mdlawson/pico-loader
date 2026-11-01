@@ -3,21 +3,7 @@
 // colour framebuffer, as the DSTWO's in-game menu does, keeping the game's
 // contents of the bank and every register it changes.
 
-#include <stdint.h>
-
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef volatile u8 vu8;
-typedef volatile u16 vu16;
-typedef volatile u32 vu32;
-
-// mirrors common/sharedMemory.h
-#define RTS_MENU_STATE_RESUME   0x4D534552 // 'RESM'
-#define RTS_MENU_STATE_EXIT     0x54495845 // 'EXIT'
-// the cartridge header, at the same distance from the exit request block in
-// both mirrors (0x027FF680 -> 0x027FFE00, 0x02FFF680 -> 0x02FFFE00)
-#define HEADER_FROM_BLOCK       0x780
+#include "rtsmenu.h"
 
 #define REG_DISPCNT_A       (*(vu32*)0x04000000)
 #define REG_DISPCNT_B       (*(vu32*)0x04001000)
@@ -26,14 +12,12 @@ typedef volatile u32 vu32;
 #define REG_MASTER_BRIGHT_A (*(vu32*)0x0400006C)
 #define REG_MASTER_BRIGHT_B (*(vu32*)0x0400106C)
 #define REG_KEYINPUT        (*(vu16*)0x04000130)
-#define REG_VRAMCNT_A       (*(vu8*)0x04000240)
+#define REG_VRAMCNT         ((vu8*)0x04000240)
 #define REG_POWCNT1         (*(vu16*)0x04000304)
 #define PALETTE_B           ((vu16*)0x05000400)
 
 #define KEY_A       (1 << 0)
 #define KEY_B       (1 << 1)
-#define KEY_SELECT  (1 << 2)
-#define KEY_START   (1 << 3)
 #define KEY_UP      (1 << 6)
 #define KEY_DOWN    (1 << 7)
 
@@ -44,7 +28,10 @@ typedef volatile u32 vu32;
 #define RGB(r, g, b) ((u16)((r) | ((g) << 5) | ((b) << 10)))
 
 extern const u16 gFont[]; // start.s: 8x16 cells, 2 bits per pixel, from ' '
-extern u32 __vram_copy[];  // rtsmenu.ld: room for vram bank A
+
+game_screen_t gGameScreen;
+
+static vu16* const sFrame = (vu16*)0x06800000; // bank A in lcdc mode
 
 // gcc may turn struct and array initialisers into these
 void* memcpy(void* dst, const void* src, unsigned int n)
@@ -64,20 +51,6 @@ void* memset(void* dst, int value, unsigned int n)
     return dst;
 }
 
-static vu16* const sFrame = (vu16*)0x06800000; // bank A in lcdc mode
-
-static struct
-{
-    u32 dispcntA;
-    u32 dispcntB;
-    u32 dispcapcnt;
-    u32 masterBrightA;
-    u32 masterBrightB;
-    u16 powcnt1;
-    u16 backdropB;
-    u8 vramcntA;
-} sSaved;
-
 static void copyWords(volatile u32* dst, const volatile u32* src, u32 count)
 {
     while (count--)
@@ -95,21 +68,22 @@ static void takeScreens(void)
     // a display capture in flight finishes in the frame it started
     if (REG_DISPCAPCNT & (1u << 31))
         waitVBlank();
-    sSaved.dispcntA = REG_DISPCNT_A;
-    sSaved.dispcntB = REG_DISPCNT_B;
-    sSaved.dispcapcnt = REG_DISPCAPCNT;
-    sSaved.masterBrightA = REG_MASTER_BRIGHT_A;
-    sSaved.masterBrightB = REG_MASTER_BRIGHT_B;
-    sSaved.powcnt1 = REG_POWCNT1;
-    sSaved.backdropB = PALETTE_B[0];
-    sSaved.vramcntA = REG_VRAMCNT_A;
+    gGameScreen.dispcntA = REG_DISPCNT_A;
+    gGameScreen.dispcntB = REG_DISPCNT_B;
+    gGameScreen.dispcapcnt = REG_DISPCAPCNT;
+    gGameScreen.masterBrightA = REG_MASTER_BRIGHT_A;
+    gGameScreen.masterBrightB = REG_MASTER_BRIGHT_B;
+    gGameScreen.powcnt1 = REG_POWCNT1;
+    gGameScreen.backdropB = PALETTE_B[0];
+    for (int i = 0; i < 10; i++)
+        gGameScreen.vramcnt[i] = REG_VRAMCNT[i];
 
     REG_DISPCAPCNT = 0;
-    REG_VRAMCNT_A = 0x80; // enabled, lcdc
+    REG_VRAMCNT[0] = 0x80; // A enabled, lcdc
     copyWords(__vram_copy, (vu32*)sFrame, VRAM_A_SIZE / 4);
 
     // engine A shows bank A as is on the top screen, engine B only its backdrop
-    REG_POWCNT1 = sSaved.powcnt1 | 0x8203; // lcds, 2d A and B, A on top; 3d as it was
+    REG_POWCNT1 = gGameScreen.powcnt1 | 0x8203; // lcds, 2d A and B, A on top; 3d as it was
     REG_MASTER_BRIGHT_A = 0;
     REG_MASTER_BRIGHT_B = 0;
     REG_DISPCNT_A = 2 << 16; // vram display, bank A
@@ -122,14 +96,14 @@ static void giveScreensBack(void)
     waitVBlank();
     REG_DISPCNT_A = 0; // nothing shows bank A while it is filled
     copyWords((vu32*)sFrame, __vram_copy, VRAM_A_SIZE / 4);
-    REG_VRAMCNT_A = sSaved.vramcntA;
-    PALETTE_B[0] = sSaved.backdropB;
-    REG_MASTER_BRIGHT_A = sSaved.masterBrightA;
-    REG_MASTER_BRIGHT_B = sSaved.masterBrightB;
-    REG_POWCNT1 = sSaved.powcnt1;
-    REG_DISPCNT_B = sSaved.dispcntB;
-    REG_DISPCNT_A = sSaved.dispcntA;
-    REG_DISPCAPCNT = sSaved.dispcapcnt;
+    REG_VRAMCNT[0] = gGameScreen.vramcnt[0];
+    PALETTE_B[0] = gGameScreen.backdropB;
+    REG_MASTER_BRIGHT_A = gGameScreen.masterBrightA;
+    REG_MASTER_BRIGHT_B = gGameScreen.masterBrightB;
+    REG_POWCNT1 = gGameScreen.powcnt1;
+    REG_DISPCNT_B = gGameScreen.dispcntB;
+    REG_DISPCNT_A = gGameScreen.dispcntA;
+    REG_DISPCAPCNT = gGameScreen.dispcapcnt;
 }
 
 // ---------------------------------------------------------------- drawing
@@ -182,18 +156,24 @@ static void drawText(int x, int y, const char* text, u16 ink, u16 paper)
 #define COLOR_DIM       RGB(15, 17, 21)
 #define COLOR_SELECT_BG RGB(26, 27, 30)
 #define COLOR_SELECT    RGB(3, 4, 8)
+#define COLOR_GOOD      RGB(12, 26, 14)
+#define COLOR_BAD       RGB(30, 12, 10)
+#define COLOR_BAR       RGB(10, 18, 30)
 
-static const struct
+enum { ITEM_RESUME, ITEM_SAVE, ITEM_EXIT };
+
+static const char* const sLabels[] =
 {
-    const char* label;
-    u32 state;
-} sItems[] =
-{
-    { "Resume game", RTS_MENU_STATE_RESUME },
-    { "Exit to launcher", RTS_MENU_STATE_EXIT },
+    [ITEM_RESUME] = "Resume game",
+    [ITEM_SAVE] = "Save state (slot 1)",
+    [ITEM_EXIT] = "Exit to launcher",
 };
-#define ITEM_COUNT ((int)(sizeof(sItems) / sizeof(sItems[0])))
-#define ITEMS_Y 64
+
+static int sItems[3];
+static int sItemCount;
+
+#define ITEMS_Y     60
+#define STATUS_Y    126
 
 static void drawGameLine(const u8* header)
 {
@@ -204,22 +184,37 @@ static void drawGameLine(const u8* header)
     line[n++] = ' ';
     line[n++] = '(';
     for (int i = 0; i < 4; i++)
-        line[n++] = header[12 + i];
+        line[n++] = header[12 + i] ? header[12 + i] : '?';
     line[n++] = ')';
     line[n] = 0;
-    drawText(8, 32, line, COLOR_DIM, COLOR_BG);
+    drawText(8, 30, line, COLOR_DIM, COLOR_BG);
 }
 
 static void drawItems(int selected)
 {
-    for (int i = 0; i < ITEM_COUNT; i++)
+    for (int i = 0; i < sItemCount; i++)
     {
         int y = ITEMS_Y + i * 20;
         u16 paper = i == selected ? COLOR_SELECT_BG : COLOR_BG;
         u16 ink = i == selected ? COLOR_SELECT : COLOR_TEXT;
         fillRect(8, y - 2, SCREEN_W - 16, 20, paper);
-        drawText(16, y, sItems[i].label, ink, paper);
+        drawText(16, y, sLabels[sItems[i]], ink, paper);
     }
+}
+
+static void drawStatus(const char* text, u16 ink)
+{
+    fillRect(0, STATUS_Y, SCREEN_W, 20, COLOR_BG);
+    if (text)
+        drawText(8, STATUS_Y, text, ink, COLOR_BG);
+}
+
+static void drawProgress(u32 done, u32 total)
+{
+    const int x = 8, y = STATUS_Y + 18, w = SCREEN_W - 16, h = 6;
+    int filled = (int)(done * (u32)w / total);
+    fillRect(x, y, filled, h, COLOR_BAR);
+    fillRect(x + filled, y, w - filled, h, COLOR_TITLE_BG);
 }
 
 static u16 keysDown(void)
@@ -234,8 +229,31 @@ static void waitRelease(void)
     for (vu32 i = 0; i < 0x20000; i++);
 }
 
+static void saveState(void* block)
+{
+    drawStatus("Saving state...", COLOR_TEXT);
+    drawProgress(0, 1);
+    const char* problem = stateSave(block, drawProgress);
+    fillRect(0, STATUS_Y + 18, SCREEN_W, 6, COLOR_BG);
+    if (problem)
+    {
+        char line[33] = "Save failed: ";
+        int n = 13;
+        for (int i = 0; problem[i] && n < 32; i++)
+            line[n++] = problem[i];
+        line[n] = 0;
+        drawStatus(line, COLOR_BAD);
+    }
+    else
+    {
+        drawStatus("Saved to slot 1.", COLOR_GOOD);
+    }
+}
+
 u32 rtsMain(void* block)
 {
+    volatile rts_info_t* rts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
+    stateTakeIo();
     takeScreens();
     fillRect(0, 0, SCREEN_W, SCREEN_H, COLOR_BG);
     fillRect(0, 0, SCREEN_W, 22, COLOR_TITLE_BG);
@@ -243,6 +261,14 @@ u32 rtsMain(void* block)
     drawGameLine((const u8*)block + HEADER_FROM_BLOCK);
     drawText(8, SCREEN_H - 40, "Up/Down: choose  A: confirm", COLOR_DIM, COLOR_BG);
     drawText(8, SCREEN_H - 22, "B: back to the game", COLOR_DIM, COLOR_BG);
+
+    sItemCount = 0;
+    sItems[sItemCount++] = ITEM_RESUME;
+    if (rts->stateSector != 0)
+        sItems[sItemCount++] = ITEM_SAVE;
+    sItems[sItemCount++] = ITEM_EXIT;
+    if (rts->stateSector == 0)
+        drawStatus("No state file: see rtsstatus.txt", COLOR_DIM);
 
     int selected = 0;
     drawItems(selected);
@@ -256,11 +282,18 @@ u32 rtsMain(void* block)
         if (!keys)
             continue;
         if (keys & KEY_UP)
-            selected = selected == 0 ? ITEM_COUNT - 1 : selected - 1;
+            selected = selected == 0 ? sItemCount - 1 : selected - 1;
         else if (keys & KEY_DOWN)
-            selected = selected == ITEM_COUNT - 1 ? 0 : selected + 1;
+            selected = selected == sItemCount - 1 ? 0 : selected + 1;
         else if (keys & KEY_A)
-            answer = sItems[selected].state;
+        {
+            switch (sItems[selected])
+            {
+                case ITEM_RESUME: answer = RTS_MENU_STATE_RESUME; break;
+                case ITEM_EXIT: answer = RTS_MENU_STATE_EXIT; break;
+                case ITEM_SAVE: waitRelease(); saveState(block); break;
+            }
+        }
         else if (keys & KEY_B)
             answer = RTS_MENU_STATE_RESUME;
         waitVBlank();

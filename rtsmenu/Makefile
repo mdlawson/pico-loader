@@ -5,11 +5,11 @@ PREFIX ?= arm-none-eabi-
 CFLAGS := -mcpu=arm946e-s -marm -Os -ffreestanding -fno-builtin -fno-tree-loop-distribute-patterns -nostdlib -Wall -Wextra -I../common
 rtsmenu9.bin: rtsmenu9.elf
 	$(PREFIX)objcopy -O binary $< $@
-rtsmenu9.elf: start.o menu.o rtsmenu.ld
-	$(PREFIX)gcc $(CFLAGS) -T rtsmenu.ld -Wl,-Map,rtsmenu9.map start.o menu.o -lgcc -o $@
+rtsmenu9.elf: start.o menu.o state.o rtsmenu.ld
+	$(PREFIX)gcc $(CFLAGS) -T rtsmenu.ld -Wl,-Map,rtsmenu9.map start.o menu.o state.o -lgcc -o $@
 start.o: start.s font.bin
 	$(PREFIX)as -mcpu=arm946e-s $< -o $@
-menu.o: menu.c
+%.o: %.c rtsmenu.h state.h
 	$(PREFIX)gcc $(CFLAGS) -c $< -o $@
 clean:
 	rm -f *.o rtsmenu9.elf rtsmenu9.bin rtsmenu9.map
