@@ -847,7 +847,7 @@ void NdsLoader::SetupRealTimeSave(rts_info_t& rts)
     u32 menuSize = f_size(file.get());
     u32 menuSector = getContiguousFileSector(file.get());
     f_close(file.get());
-    if (menuSize == 0 || menuSize > RTS_STASH_SIZE || menuSector == 0)
+    if (menuSize == 0 || menuSize > RTS_MENU_MAX_SIZE || menuSector == 0)
     {
         LOG_WARNING("Rts menu unusable: size 0x%X, sector 0x%X\n", menuSize, menuSector);
         return;

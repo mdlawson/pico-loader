@@ -107,7 +107,8 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 #define EXIT_REQUEST_RUN_MAGIC      (EXIT_REQUEST_PARK_MAGIC + 2)
 #define RTS_INFO_MAGIC              0x31535452 // 'RTS1'
 #define RTS_BASE                    0x02100000
-#define RTS_STASH_SIZE              0x10000
+#define RTS_STASH_SIZE              0x30000 // menu, its stack, and a copy of vram bank A
+#define RTS_MENU_MAX_SIZE           0x8000
 #define RTS_STASH_PATH              "/_pico/rtsstash.bin"
 #define RTS_MENU_PATH               "/_pico/rtsmenu9.bin"
 #define RTS_MENU_STATE_RESUME       0x4D534552 // 'RESM'
