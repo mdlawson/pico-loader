@@ -19,6 +19,9 @@ typedef volatile u32 vu32;
 #define RTS_MENU_STATE_SDREAD   0x44524453 // 'SDRD'
 #define RTS_MENU_STATE_SDWRITE  0x52574453 // 'SDWR'
 #define RTS_MENU_STATE_DONE     0x454E4F44 // 'DONE'
+#define RTS_MENU_STATE_FAIL     0x4C494146 // 'FAIL'
+#define RTS_MENU_STATE_ARM7_SAVE 0x58433741 // 'A7CX'
+#define RTS_MENU_STATE_ARM7_LOAD 0x444C3741 // 'A7LD'
 
 typedef struct
 {
@@ -34,6 +37,8 @@ typedef struct
     u32 cmdSector;
     u32 cmdAddress;
     u32 cmdSectorCount;
+    u32 arm7PatchStart;
+    u32 arm7PatchSize;
 } rts_info_t;
 
 #define RTS_INFO_OFFSET         0x110 // in exit_request_block_t
@@ -61,12 +66,19 @@ extern u8 __scratch[];     // rtsmenu.ld: 0x8000 bytes the arm7 can read and wri
 #define SCRATCH_SIZE 0x8000
 
 void readBankedRegs(u32* out); // start.s: spsr_irq, svc, abt, und, sys, fiq
+void writeBankedRegs(const u32* in); // start.s: the same, back
 
 // state.c
 void stateTakeIo(void);
 // Writes the save state. progress(done, total) is called between steps.
 // Returns 0 on success, or a short reason.
 const char* stateSave(void* block, void (*progress)(u32 done, u32 total));
+// Checks slot 1 holds a state this game can load here. 0 if so, or why not.
+const char* stateCheck(void* block);
+// Loads it. Before anything changes it checks again and returns why not; once
+// it has started, *broken is set when it could not finish (the game's memory
+// is then a mix, and only exiting makes sense).
+const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* broken);
 
 static inline void dcFlushAll(void)
 {

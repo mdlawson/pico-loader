@@ -37,7 +37,8 @@ void stateTakeIo(void)
 
 static volatile rts_info_t* sRts;
 
-static void command(u32 cmd, u32 sector, u32 address, u32 sectorCount)
+// Returns the arm7's answer: RTS_MENU_STATE_DONE, or _FAIL.
+static u32 command(u32 cmd, u32 sector, u32 address, u32 sectorCount)
 {
     dcFlushAll(); // the arm7 reads memory as it is, and writes past the cache
     sRts->cmdSector = sector;
@@ -49,10 +50,11 @@ static void command(u32 cmd, u32 sector, u32 address, u32 sectorCount)
     {
         for (vu32 i = 0; i < 0x400; i++); // off the bus while the arm7 works
         dcInvalidateLine(&sRts->menuState);
-        if (sRts->menuState == RTS_MENU_STATE_DONE)
+        if (sRts->menuState == RTS_MENU_STATE_DONE || sRts->menuState == RTS_MENU_STATE_FAIL)
             break;
     }
     dcFlushAll(); // drop what the cache kept of memory the arm7 wrote
+    return sRts->menuState;
 }
 
 // Never anything outside the state file: offset and size are checked here.
@@ -229,8 +231,8 @@ const char* stateSave(void* block, void (*progress)(u32 done, u32 total))
     if (sRts->stateSector == 0 || sRts->stateSectorCount * 512 < STATE_END)
         return "no state file";
 
-    // ten single steps, main ram in MAIN_STEP parts around the stash in scratch parts
-    const u32 total = 10 + 0x100000 / MAIN_STEP + (0x400000 - 0x100000 - RTS_STASH_SIZE + MAIN_STEP - 1) / MAIN_STEP
+    // eleven single steps, main ram in MAIN_STEP parts around the stash in scratch parts
+    const u32 total = 11 + 0x100000 / MAIN_STEP + (0x400000 - 0x100000 - RTS_STASH_SIZE + MAIN_STEP - 1) / MAIN_STEP
         + RTS_STASH_SIZE / SCRATCH_SIZE;
     u32 done = 0;
 #define STEP(x) do { if (!(x)) return "write refused"; progress(++done, total); } while (0)
@@ -244,6 +246,11 @@ const char* stateSave(void* block, void (*progress)(u32 done, u32 total))
     memset(io, 0, STATE_ARM7_IO - STATE_ARM9_IO);
     copyWords(io, sIoDump, STATE_ARM9_IO_SIZE);
     STEP(writeState(STATE_ARM9_IO, (u32)io, STATE_ARM7_IO - STATE_ARM9_IO)); // in whole sectors
+
+    // the arm7's registers and what its stub kept of the game's
+    memset(__scratch, 0, STATE_ITCM - STATE_ARM7_IO);
+    command(RTS_MENU_STATE_ARM7_SAVE, 0, (u32)__scratch, 0);
+    STEP(writeState(STATE_ARM7_IO, (u32)__scratch, STATE_ITCM - STATE_ARM7_IO));
 
     STEP(writeStateFromArm9(STATE_ITCM, (const volatile void*)0x01FF8000, 0x8000));
     u32 dtcm = cp15Read(1) & ~0xFFF;
@@ -286,6 +293,231 @@ const char* stateSave(void* block, void (*progress)(u32 done, u32 total))
     STEP(writeState(STATE_HEADER, (u32)__scratch, 512));
     while (done < total)
         progress(++done, total);
+    return 0;
+#undef STEP
+}
+
+// ---------------------------------------------------------------- load
+
+static state_header_t sHeader;
+
+static int readState(u32 offset, u32 address, u32 size)
+{
+    if ((offset | size) & 511 || offset + size > sRts->stateSectorCount * 512 || offset + size < offset)
+        return 0;
+    return command(RTS_MENU_STATE_SDREAD, sRts->stateSector + offset / 512, address, size / 512)
+        == RTS_MENU_STATE_DONE;
+}
+
+// Into memory only the arm9 sees, in scratch sized steps.
+static int readStateToArm9(u32 offset, volatile void* dst, u32 size)
+{
+    for (u32 done = 0; done < size; done += SCRATCH_SIZE)
+    {
+        u32 step = size - done < SCRATCH_SIZE ? size - done : SCRATCH_SIZE;
+        if (!readState(offset + done, (u32)__scratch, step))
+            return 0;
+        copyWords((volatile u32*)((u32)dst + done), (const u32*)__scratch, step);
+    }
+    return 1;
+}
+
+// The stash file gets the state's main ram under the menu: the arm7 puts it in
+// place when the menu leaves. Never anything outside the stash itself.
+static int writeStash(u32 offset, u32 address, u32 size)
+{
+    if ((offset | size) & 511 || offset + size > RTS_STASH_SIZE)
+        return 0;
+    return command(RTS_MENU_STATE_SDWRITE, sRts->stashSector + offset / 512, address, size / 512)
+        == RTS_MENU_STATE_DONE;
+}
+
+const char* stateCheck(void* block)
+{
+    sRts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
+    if (sRts->stateSector == 0 || sRts->stateSectorCount * 512 < STATE_END)
+        return "no state file";
+    if (!readState(STATE_HEADER, (u32)__scratch, 512))
+        return "could not read it";
+    memcpy(&sHeader, __scratch, sizeof(sHeader));
+    const u8* cart = (const u8*)block + HEADER_FROM_BLOCK;
+    u32 gameCode = cart[12] | (cart[13] << 8) | (cart[14] << 16) | ((u32)cart[15] << 24);
+    if (sHeader.magic != STATE_MAGIC)
+        return "slot 1 is empty";
+    if (sHeader.version != STATE_VERSION)
+        return "older format, save again";
+    if (sHeader.gameCode != gameCode)
+        return "from another game";
+    // the same patches in the same places, entered the same way
+    if (sHeader.blockAddress != (u32)block || sHeader.waitEntry != gSavedRegs[0] ||
+        sHeader.irqLr != gSavedRegs[10] || sHeader.irqSp != gSavedRegs[11])
+        return "other loader setup (arm9)";
+    if (!readState(STATE_ARM7_IO, (u32)__scratch, 512))
+        return "could not read it";
+    if (command(RTS_MENU_STATE_ARM7_LOAD, 0, (u32)__scratch, 0) != RTS_MENU_STATE_DONE)
+        return "other loader setup (arm7)";
+    return 0;
+}
+
+// One sector of main ram, all but [keepStart, keepEnd) (offsets from 0x02000000).
+static int restoreSectorAround(u32 offset, u32 keepStart, u32 keepEnd)
+{
+    if (!readState(STATE_MAIN_RAM + offset, (u32)__scratch, 512))
+        return 0;
+    vu8* ram = (vu8*)(0x02000000 + offset);
+    for (u32 i = 0; i < 512; i++)
+        if (offset + i < keepStart || offset + i >= keepEnd)
+            ram[i] = __scratch[i];
+    dcFlushAll();
+    return 1;
+}
+
+// The writable arm9 registers, from the dump (offsets from 0x04000000, size).
+static const u16 sIoRestore[][2] =
+{
+    { 0x008, 8 }, { 0x048, 4 }, { 0x050, 2 }, { 0x060, 4 },     // BGxCNT, WININ/OUT, BLDCNT, DISP3DCNT
+    { 0x1008, 8 }, { 0x1048, 4 }, { 0x1050, 2 },                // the same of engine B
+    { 0x210, 4 },                                               // IE
+};
+
+const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* broken)
+{
+    *broken = 0;
+    const char* problem = stateCheck(block);
+    if (problem)
+        return problem;
+    const state_header_t* h = &sHeader;
+
+    const u32 total = 12 + 0x400000 / MAIN_STEP + RTS_STASH_SIZE / SCRATCH_SIZE + 4;
+    u32 done = 0;
+    *broken = 1; // from here on the game's memory changes
+#define STEP(x) do { if (!(x)) return "read failed"; progress(++done < total ? done : total, total); } while (0)
+
+    // arm7 wram and the arm7's context, through the vram A copy (filled later)
+    u32 arm7Buffer = (u32)__vram_copy;
+    STEP(readState(STATE_ARM7_IO, arm7Buffer, 512));
+    STEP(readState(STATE_ARM7_WRAM, arm7Buffer + ARM7_CTX_SIZE, 0x10000));
+    STEP(command(RTS_MENU_STATE_ARM7_LOAD, 0, arm7Buffer, 0x10000 / 512) == RTS_MENU_STATE_DONE);
+
+    // shared wram, whoever owns which half
+    *(vu8*)0x04000247 = h->vramcnt[7];
+    u32 mode = h->vramcnt[7] & 3;
+    for (u32 half = 0; half < 2; half++)
+    {
+        int arm7 = mode == 3 || (mode == 1 && half == 0) || (mode == 2 && half == 1);
+        u32 offset = STATE_SHARED_WRAM + half * 0x4000;
+        u32 dst = 0x037F8000 + (mode == 0 || mode == 3 ? half * 0x4000 : 0);
+        STEP(arm7 ? readState(offset, dst, 0x4000) : readStateToArm9(offset, (volatile void*)dst, 0x4000));
+    }
+
+    // the tcms: dtcm holds the irq frames the game resumes from
+    STEP(readStateToArm9(STATE_ITCM, (volatile void*)0x01FF8000, 0x8000));
+    u32 dtcm = cp15Read(1) & ~0xFFF;
+    STEP(readStateToArm9(STATE_DTCM, (volatile void*)dtcm, 0x4000));
+
+    STEP(readStateToArm9(STATE_PALETTE, (volatile void*)0x05000000, 0x800));
+    STEP(readStateToArm9(STATE_OAM, (volatile void*)0x07000000, 0x800));
+
+    // vram: A into the copy the menu puts back when it leaves, the rest in place
+    u32 offset = STATE_VRAM;
+    for (u32 i = 0; i < sizeof(sBanks) / sizeof(sBanks[0]); i++)
+    {
+        if (i == 0)
+        {
+            STEP(readState(offset, (u32)__vram_copy, sBanks[0].size));
+        }
+        else
+        {
+            vu8* cnt = (vu8*)(0x04000240 + sBanks[i].cnt);
+            *cnt = 0x80;
+            int ok = readStateToArm9(offset, (volatile void*)sBanks[i].lcdc, sBanks[i].size);
+            *cnt = h->vramcnt[sBanks[i].cnt];
+            STEP(ok);
+        }
+        offset += sBanks[i].size;
+    }
+
+    // Main ram, around: the stash window (through the stash file below), the
+    // block (the live handshake) and the arm7 patch space if it is in main
+    // memory (its sd routines are running).
+    u32 keep[3][2] =
+    {
+        { RTS_BASE - 0x02000000, RTS_BASE - 0x02000000 + RTS_STASH_SIZE },
+        { (u32)block & 0x3FFFFF, ((u32)block & 0x3FFFFF) + RTS_INFO_OFFSET + sizeof(rts_info_t) },
+        { 0, 0 },
+    };
+    if (sRts->arm7PatchStart >= 0x02000000 && sRts->arm7PatchStart < 0x03000000)
+    {
+        keep[2][0] = sRts->arm7PatchStart & 0x3FFFFF;
+        keep[2][1] = keep[2][0] + sRts->arm7PatchSize;
+    }
+    for (u32 ram = 0; ram < 0x400000; )
+    {
+        u32 step = MAIN_STEP - (ram % MAIN_STEP);
+        int around = -1;
+        for (int k = 0; k < 3; k++)
+        {
+            u32 start = keep[k][0] & ~511, end = (keep[k][1] + 511) & ~511;
+            if (start == end)
+                continue;
+            if (ram >= start && ram < end)
+                around = k;
+            else if (ram < start && ram + step > start)
+                step = start - ram;
+        }
+        if (around == 0)
+        {
+            ram = keep[0][1]; // the stash window is whole sectors
+            continue;
+        }
+        if (around > 0)
+        {
+            STEP(restoreSectorAround(ram, keep[around][0], keep[around][1]));
+            ram += 512;
+            continue;
+        }
+        if (ram + step > 0x400000)
+            step = 0x400000 - ram;
+        STEP(readState(STATE_MAIN_RAM + ram, 0x02000000 + ram, step));
+        ram += step;
+    }
+    for (u32 part = 0; part < RTS_STASH_SIZE; part += SCRATCH_SIZE)
+    {
+        STEP(readState(STATE_MAIN_RAM + keep[0][0] + part, (u32)__scratch, SCRATCH_SIZE));
+        STEP(writeStash(part, (u32)__scratch, SCRATCH_SIZE));
+    }
+
+    // registers: the screen ones go back as the menu leaves
+    STEP(readState(STATE_ARM9_IO, (u32)__scratch, STATE_ARM7_IO - STATE_ARM9_IO));
+    for (u32 i = 0; i < sizeof(sIoRestore) / sizeof(sIoRestore[0]); i++)
+        for (u32 b = 0; b < sIoRestore[i][1]; b += 2)
+            *(vu16*)(0x04000000 + sIoRestore[i][0] + b) = *(u16*)(__scratch + sIoRestore[i][0] + b);
+    gGameScreen.dispcntA = h->dispcntA;
+    gGameScreen.dispcntB = h->dispcntB;
+    gGameScreen.dispcapcnt = h->dispcapcnt & ~(1u << 31); // no capture started by this
+    gGameScreen.masterBrightA = h->masterBrightA;
+    gGameScreen.masterBrightB = h->masterBrightB;
+    gGameScreen.powcnt1 = h->powcnt1;
+    gGameScreen.backdropB = h->backdropB;
+    memcpy(gGameScreen.vramcnt, h->vramcnt, 10);
+
+    // the cpu: what the menu leaves with, and the other modes' registers
+    for (int i = 0; i < 8; i++)
+        gSavedRegs[2 + i] = h->r4_r11[i];
+    gSavedRegs[10] = h->irqLr;
+    gSavedRegs[11] = h->irqSp;
+    u32 banked[1 + 3 + 3 + 3 + 2 + 8];
+    banked[0] = h->irqSpsr;
+    memcpy(&banked[1], h->svc, 3 * 4);
+    memcpy(&banked[4], h->abt, 3 * 4);
+    memcpy(&banked[7], h->und, 3 * 4);
+    memcpy(&banked[10], h->sys, 2 * 4);
+    memcpy(&banked[12], h->fiq, 8 * 4);
+    writeBankedRegs(banked);
+
+    while (done < total)
+        progress(++done, total);
+    *broken = 0;
     return 0;
 #undef STEP
 }

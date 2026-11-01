@@ -101,8 +101,8 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 // RTS_MENU_STATE_LEFT, after which the arm7 may put the stash back.
 // Size of the arm7 patch heap. Arm7Patcher (arm9) reserves it and NdsLoader (arm7)
 // copies it into place when it lands in arm7 wram, so both must use this one value.
-// The exit combo with the rts takes about 0x550 of it.
-#define ARM7_PATCH_SPACE_SIZE       0xC00
+// The exit combo with the rts takes about 0x870 of it, the save code the rest.
+#define ARM7_PATCH_SPACE_SIZE       0x1000
 
 #define EXIT_REQUEST_RUN_MAGIC      (EXIT_REQUEST_PARK_MAGIC + 2)
 #define RTS_INFO_MAGIC              0x31535452 // 'RTS1'
@@ -122,6 +122,15 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 #define RTS_MENU_STATE_SDREAD       0x44524453 // 'SDRD'
 #define RTS_MENU_STATE_SDWRITE      0x52574453 // 'SDWR'
 #define RTS_MENU_STATE_DONE         0x454E4F44 // 'DONE'
+// For save states (layout in rtsmenu/state.h): ARM7_SAVE has the arm7 write its
+// context (registers of every mode, irq state, sound and timer controls) to
+// cmdAddress. ARM7_LOAD takes a context back from cmdAddress; with a nonzero
+// cmdSectorCount it first copies the 64 KB after it over arm7 wram, all but
+// the arm7 patch space. The arm7 answers DONE, or FAIL when the context is not
+// from this same setup.
+#define RTS_MENU_STATE_ARM7_SAVE    0x58433741 // 'A7CX'
+#define RTS_MENU_STATE_ARM7_LOAD    0x444C3741 // 'A7LD'
+#define RTS_MENU_STATE_FAIL         0x4C494146 // 'FAIL'
 
 // Save states: one contiguous file per game and slot, made by the loader at boot.
 #define RTS_STATE_DIRECTORY         "/_pico/states"
@@ -143,9 +152,11 @@ struct rts_info_t
     u32 cmdSector;      // block + 0x134
     u32 cmdAddress;     // block + 0x138
     u32 cmdSectorCount; // block + 0x13C
+    u32 arm7PatchStart; // the arm7 patch space, in arm7 wram or main memory (block + 0x140)
+    u32 arm7PatchSize;  // block + 0x144
 };
 
-static_assert(sizeof(rts_info_t) == 0x30);
+static_assert(sizeof(rts_info_t) == 0x38);
 // the arm7 stub stores the menu's exit answer as the exit request as it is
 static_assert(RTS_MENU_STATE_EXIT == EXIT_REQUEST_REQUEST_MAGIC);
 
@@ -177,7 +188,7 @@ struct exit_request_block_t
     rts_info_t rts;
 };
 
-static_assert(sizeof(exit_request_block_t) == 0x140);
+static_assert(sizeof(exit_request_block_t) == 0x148);
 static_assert(offsetof(exit_request_block_t, rts.cmdSector) == 0x134);
 static_assert(offsetof(exit_request_block_t, rts.cmdSectorCount) == 0x13C);
 static_assert(offsetof(exit_request_block_t, rts) == 0x110);

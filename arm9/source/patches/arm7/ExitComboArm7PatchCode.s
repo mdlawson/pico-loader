@@ -296,6 +296,12 @@ menuCommand:
     cmp r0, r3
     ldreq r3, patch_exitcombo_arm7_sdwrite_address
     beq 1f
+    ldr r3, menuStateArm7Save
+    cmp r0, r3
+    beq arm7Save
+    ldr r3, menuStateArm7Load
+    cmp r0, r3
+    beq arm7Load
     ldr r3, menuStateSdRead
     cmp r0, r3
     bne menuAnswered
@@ -308,6 +314,201 @@ menuCommand:
     ldr r2, menuStateDone
     str r2, [r4, #0x128] // rts.menuState
     b menuCommand
+
+// Save states (rtsmenu/state.h, arm7 context). Both run at command loop level:
+// r4 = block, r5 = state words, r7 = the wait loop, sp as the menu's whole time.
+arm7Save:
+    ldr r0, [r4, #0x138] // rts.cmdAddress
+    ldr r1, menuStateArm7Save
+    mrs r2, spsr
+    mov r3, sp
+    stmia r0!, {r1, r2, r3} // magic, spsr_irq, sp_irq
+    mrs r6, cpsr
+    msr cpsr_c, #0xD3 // svc
+    mrs r1, spsr
+    mov r2, sp
+    mov r3, lr
+    stmia r0!, {r1, r2, r3}
+    msr cpsr_c, #0xD7 // abt
+    mrs r1, spsr
+    mov r2, sp
+    mov r3, lr
+    stmia r0!, {r1, r2, r3}
+    msr cpsr_c, #0xDB // und
+    mrs r1, spsr
+    mov r2, sp
+    mov r3, lr
+    stmia r0!, {r1, r2, r3}
+    msr cpsr_c, #0xDF // sys
+    mov r2, sp
+    mov r3, lr
+    stmia r0!, {r2, r3}
+    msr cpsr_c, #0xD1 // fiq
+    stmia r0!, {r8-r12}
+    mov r1, sp
+    mov r2, lr
+    mrs r3, spsr
+    stmia r0!, {r1, r2, r3}
+    msr cpsr_c, r6
+    ldr r3, regIf
+    ldr r1, [r3, #-4] // IE
+    str r1, [r0], #4
+    ldr r1, [r5, #24] // holdSavedIme
+    ldr r2, [r5, #28] // holdSavedSoundCnt
+    ldr r3, [r5, #32] // holdSavedIf
+    stmia r0!, {r1, r2, r3}
+    mov r3, #0x04000000
+    add r2, r3, #0x300
+    ldrh r1, [r2, #4] // POWCNT2
+    str r1, [r0], #4
+    add r2, r3, #0x500
+    ldrh r1, [r2, #4] // SOUNDBIAS
+    str r1, [r0], #4
+    add r2, r3, #0x100 // timers
+    mov r6, #4
+2:
+    ldr r1, [r2], #4
+    str r1, [r0], #4
+    subs r6, r6, #1
+    bne 2b
+    add r2, r3, #0x400 // SOUNDxCNT
+    mov r6, #16
+3:
+    ldr r1, [r2], #0x10
+    str r1, [r0], #4
+    subs r6, r6, #1
+    bne 3b
+    add r2, r5, #36 // holdStash: the game's wram words under the wait loop
+    mov r6, #9
+4:
+    ldr r1, [r2], #4
+    str r1, [r0], #4
+    subs r6, r6, #1
+    bne 4b
+    adrl r1, patch_exitcombo_arm7_entry // which build of this stub, where
+    str r1, [r0]
+    b arm7Done
+
+arm7Load:
+    // Only a context from this same setup: same stub, same irq stack depth.
+    ldr r0, [r4, #0x138] // rts.cmdAddress
+    adrl r3, patch_exitcombo_arm7_entry
+    ldr r1, [r0]
+    ldr r2, menuStateArm7Save
+    cmp r1, r2
+    ldreq r1, [r0, #8] // sp_irq
+    cmpeq r1, sp
+    ldreq r1, [r0, #0xE4] // stub address
+    cmpeq r1, r3
+    ldrne r2, menuStateFail
+    bne arm7Answer
+    ldr r1, [r4, #0x13C] // rts.cmdSectorCount: 0 only checks
+    cmp r1, #0
+    beq arm7Done
+
+    // Arm7 wram from the 64 KB after the context, all but the patch space,
+    // whose code is the same and whose sd routines must keep their own state.
+    // The frames above sp become the saved session's, which is what resumes.
+    add r1, r0, #0x100
+    mov r2, #0x03800000
+    ldr r3, [r4, #0x140] // rts.arm7PatchStart
+    ldr r12, [r4, #0x144] // rts.arm7PatchSize
+    add r12, r3, r12
+    add r8, r2, #0x10000 // r8-r11 are the hold's to use
+5:
+    cmp r2, r3
+    cmphs r12, r2
+    ldrls r6, [r1] // outside [start, end)
+    strls r6, [r2]
+    add r1, r1, #4
+    add r2, r2, #4
+    cmp r2, r8
+    blo 5b
+
+    // the context
+    mrs r6, cpsr
+    ldr r1, [r0, #4]
+    msr spsr_cxsf, r1
+    msr cpsr_c, #0xD3 // svc
+    add r1, r0, #0x0C
+    ldmia r1, {r1, r2, r3}
+    msr spsr_cxsf, r1
+    mov sp, r2
+    mov lr, r3
+    msr cpsr_c, #0xD7 // abt
+    add r1, r0, #0x18
+    ldmia r1, {r1, r2, r3}
+    msr spsr_cxsf, r1
+    mov sp, r2
+    mov lr, r3
+    msr cpsr_c, #0xDB // und
+    add r1, r0, #0x24
+    ldmia r1, {r1, r2, r3}
+    msr spsr_cxsf, r1
+    mov sp, r2
+    mov lr, r3
+    msr cpsr_c, #0xDF // sys
+    ldr sp, [r0, #0x30]
+    ldr lr, [r0, #0x34]
+    msr cpsr_c, #0xD1 // fiq
+    add r1, r0, #0x38
+    ldmia r1, {r8-r12}
+    ldr sp, [r0, #0x4C]
+    ldr lr, [r0, #0x50]
+    ldr r1, [r0, #0x54]
+    msr spsr_cxsf, r1
+    msr cpsr_c, r6
+
+    ldr r3, regIf
+    ldr r1, [r0, #0x58]
+    str r1, [r3, #-4] // IE
+    ldr r1, [r0, #0x5C]
+    str r1, [r5, #24] // holdSavedIme, set again by holdEnd
+    ldr r1, [r0, #0x60]
+    str r1, [r5, #28] // holdSavedSoundCnt
+    ldr r1, [r0, #0x64]
+    str r1, [r5, #32] // holdSavedIf
+    mov r3, #0x04000000
+    add r2, r3, #0x300
+    ldr r1, [r0, #0x68]
+    strh r1, [r2, #4] // POWCNT2
+    add r2, r3, #0x500
+    ldr r1, [r0, #0x6C]
+    strh r1, [r2, #4] // SOUNDBIAS
+    // Timer controls (their reload values are write only), and every sound
+    // channel stopped with the state's settings: the sample addresses are write
+    // only too, so the game's driver starts its notes again.
+    add r1, r0, #0x70
+    add r2, r3, #0x100
+    mov r6, #4
+6:
+    ldr r12, [r1], #4
+    mov r12, r12, lsr #16
+    strh r12, [r2, #2] // TMxCNT_H
+    add r2, r2, #4
+    subs r6, r6, #1
+    bne 6b
+    add r2, r3, #0x400
+    mov r6, #16
+7:
+    ldr r12, [r1], #4
+    bic r12, r12, #0x80000000
+    str r12, [r2], #0x10
+    subs r6, r6, #1
+    bne 7b
+    add r2, r5, #36 // holdStash, put back over the wait loop at the end
+    mov r6, #9
+8:
+    ldr r12, [r1], #4
+    str r12, [r2], #4
+    subs r6, r6, #1
+    bne 8b
+arm7Done:
+    ldr r2, menuStateDone
+arm7Answer:
+    str r2, [r4, #0x128] // rts.menuState
+    b menuCommand // r2 = what was answered
+
 menuAnswered:
     mov r6, r0
     ldr r2, freezeComboMagic
@@ -569,6 +770,15 @@ menuStateSdWrite:
 
 menuStateDone:
     .word 0x454E4F44 // RTS_MENU_STATE_DONE
+
+menuStateFail:
+    .word 0x4C494146 // RTS_MENU_STATE_FAIL
+
+menuStateArm7Save:
+    .word 0x58433741 // RTS_MENU_STATE_ARM7_SAVE
+
+menuStateArm7Load:
+    .word 0x444C3741 // RTS_MENU_STATE_ARM7_LOAD
 
 pathMagic:
     .word 0x58454C50 // EXIT_REQUEST_PATH_MAGIC

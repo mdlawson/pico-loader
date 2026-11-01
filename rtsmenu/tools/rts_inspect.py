@@ -2,7 +2,7 @@
 Usage: python3 rts_inspect.py /path/to/_pico/states/XXXX-1.rts"""
 import struct, sys, zlib
 
-SECTIONS = [("arm9 io", 0x200, 0x1100), ("itcm", 0x4000, 0x8000), ("dtcm", 0xC000, 0x4000),
+SECTIONS = [("arm9 io", 0x200, 0x1100), ("arm7 context", 0x1400, 0x200), ("itcm", 0x4000, 0x8000), ("dtcm", 0xC000, 0x4000),
             ("palettes", 0x10000, 0x800), ("oam", 0x10800, 0x800), ("shared wram", 0x11000, 0x8000),
             ("arm7 wram", 0x19000, 0x10000)]
 off = 0x29000
@@ -27,6 +27,13 @@ print("cp15: control %08x  dtcm %08x  itcm %08x  dcache %02x icache %02x wbuf %0
 print("  regions", " ".join("%08x" % x for x in cp[8:16]))
 vram = data[28 + 47 * 4 + 4:28 + 47 * 4 + 14]
 print("VRAMCNT A-I (WRAMCNT 8th):", vram.hex(" "))
+if version >= 2:
+    c = struct.unpack_from("<64I", data, 0x1400)
+    if c[0] == 0x58433741:
+        print("arm7 at the freeze: irq sp %08x spsr %08x  svc sp %08x  sys sp %08x  IE %08x  IME %d  stub at %08x"
+              % (c[2], c[1], c[4], c[12], c[22], c[23], c[57]))
+    else:
+        print("arm7 context missing (magic %08x)" % c[0])
 print()
 for name, start, size in SECTIONS:
     part = data[start:start + size]

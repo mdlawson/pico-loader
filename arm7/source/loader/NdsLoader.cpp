@@ -649,6 +649,9 @@ void NdsLoader::ApplyArm7Patches()
     void* cheatsPtr = (void*)receiveFromArm9();
     char* bannerSavePathPtr = (char*)receiveFromArm9();
     _keepDsiBios = receiveFromArm9() != 0;
+    u32 arm7PatchSpace = receiveFromArm9(); // wherever it is
+    TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchStart = arm7PatchSpace;
+    TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchSize = arm7PatchSpace ? ARM7_PATCH_SPACE_SIZE : 0;
     if (cheatsPtr != nullptr && _cheats != nullptr)
     {
         memcpy(cheatsPtr, _cheats, _cheats->length);

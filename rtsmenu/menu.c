@@ -160,20 +160,21 @@ static void drawText(int x, int y, const char* text, u16 ink, u16 paper)
 #define COLOR_BAD       RGB(30, 12, 10)
 #define COLOR_BAR       RGB(10, 18, 30)
 
-enum { ITEM_RESUME, ITEM_SAVE, ITEM_EXIT };
+enum { ITEM_RESUME, ITEM_SAVE, ITEM_LOAD, ITEM_EXIT };
 
 static const char* const sLabels[] =
 {
     [ITEM_RESUME] = "Resume game",
     [ITEM_SAVE] = "Save state (slot 1)",
+    [ITEM_LOAD] = "Load state (slot 1)",
     [ITEM_EXIT] = "Exit to launcher",
 };
 
-static int sItems[3];
+static int sItems[4];
 static int sItemCount;
 
-#define ITEMS_Y     60
-#define STATUS_Y    126
+#define ITEMS_Y     54
+#define STATUS_Y    136
 
 static void drawGameLine(const u8* header)
 {
@@ -229,6 +230,18 @@ static void waitRelease(void)
     for (vu32 i = 0; i < 0x20000; i++);
 }
 
+static void drawProblem(const char* prefix, const char* problem)
+{
+    char line[33];
+    int n = 0;
+    for (int i = 0; prefix[i] && n < 32; i++)
+        line[n++] = prefix[i];
+    for (int i = 0; problem[i] && n < 32; i++)
+        line[n++] = problem[i];
+    line[n] = 0;
+    drawStatus(line, COLOR_BAD);
+}
+
 static void saveState(void* block)
 {
     drawStatus("Saving state...", COLOR_TEXT);
@@ -237,17 +250,44 @@ static void saveState(void* block)
     fillRect(0, STATUS_Y + 18, SCREEN_W, 6, COLOR_BG);
     if (problem)
     {
-        char line[33] = "Save failed: ";
-        int n = 13;
-        for (int i = 0; problem[i] && n < 32; i++)
-            line[n++] = problem[i];
-        line[n] = 0;
-        drawStatus(line, COLOR_BAD);
+        drawProblem("Save failed: ", problem);
     }
     else
     {
         drawStatus("Saved to slot 1.", COLOR_GOOD);
     }
+}
+
+// Asks for A once more, then loads. Returns 1 when the game should resume
+// from the loaded state; sets *broken when it can only exit.
+static int loadState(void* block, int* broken)
+{
+    *broken = 0;
+    const char* problem = stateCheck(block);
+    if (problem)
+    {
+        drawProblem("Can't load: ", problem);
+        return 0;
+    }
+    drawStatus("A: load slot 1, B: cancel", COLOR_TEXT);
+    u16 keys;
+    while (!((keys = keysDown()) & (KEY_A | KEY_B)));
+    waitRelease();
+    if (keys & KEY_B)
+    {
+        drawStatus(0, 0);
+        return 0;
+    }
+    drawStatus("Loading state...", COLOR_TEXT);
+    drawProgress(0, 1);
+    problem = stateLoad(block, drawProgress, broken);
+    fillRect(0, STATUS_Y + 18, SCREEN_W, 6, COLOR_BG);
+    if (problem)
+    {
+        drawProblem(*broken ? "Load broke: " : "Can't load: ", problem);
+        return 0;
+    }
+    return 1;
 }
 
 u32 rtsMain(void* block)
@@ -259,13 +299,15 @@ u32 rtsMain(void* block)
     fillRect(0, 0, SCREEN_W, 22, COLOR_TITLE_BG);
     drawText(8, 3, "Pico Loader RTS", COLOR_TEXT, COLOR_TITLE_BG);
     drawGameLine((const u8*)block + HEADER_FROM_BLOCK);
-    drawText(8, SCREEN_H - 40, "Up/Down: choose  A: confirm", COLOR_DIM, COLOR_BG);
-    drawText(8, SCREEN_H - 22, "B: back to the game", COLOR_DIM, COLOR_BG);
+    drawText(8, SCREEN_H - 20, "A: choose  B: back to the game", COLOR_DIM, COLOR_BG);
 
     sItemCount = 0;
     sItems[sItemCount++] = ITEM_RESUME;
     if (rts->stateSector != 0)
+    {
         sItems[sItemCount++] = ITEM_SAVE;
+        sItems[sItemCount++] = ITEM_LOAD;
+    }
     sItems[sItemCount++] = ITEM_EXIT;
     if (rts->stateSector == 0)
         drawStatus("No state file: see rtsstatus.txt", COLOR_DIM);
@@ -292,9 +334,25 @@ u32 rtsMain(void* block)
                 case ITEM_RESUME: answer = RTS_MENU_STATE_RESUME; break;
                 case ITEM_EXIT: answer = RTS_MENU_STATE_EXIT; break;
                 case ITEM_SAVE: waitRelease(); saveState(block); break;
+                case ITEM_LOAD:
+                {
+                    waitRelease();
+                    int broken;
+                    if (loadState(block, &broken))
+                        answer = RTS_MENU_STATE_RESUME;
+                    else if (broken)
+                    {
+                        // the game's memory is half one state, half the other
+                        sItemCount = 0;
+                        sItems[sItemCount++] = ITEM_EXIT;
+                        selected = 0;
+                        fillRect(0, ITEMS_Y - 2, SCREEN_W, 4 * 20, COLOR_BG);
+                    }
+                    break;
+                }
             }
         }
-        else if (keys & KEY_B)
+        else if ((keys & KEY_B) && sItems[0] == ITEM_RESUME)
             answer = RTS_MENU_STATE_RESUME;
         waitVBlank();
         drawItems(selected);

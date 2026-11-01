@@ -239,5 +239,5 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
     {
         LOG_DEBUG("Module params not found!\n");
     }
-    return (u32)patchSpaceStart < 0x03000000 ? nullptr : patchSpaceStart;
+    return patchSpaceStart;
 }

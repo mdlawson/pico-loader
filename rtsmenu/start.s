@@ -143,6 +143,39 @@ readBankedRegs:
     msr cpsr_c, r2
     bx lr
 
+// void writeBankedRegs(const u32* in): readBankedRegs' layout, back into the
+// registers. Called in irq mode with irqs off.
+.global writeBankedRegs
+.type writeBankedRegs, %function
+writeBankedRegs:
+    mrs r2, cpsr
+    ldr r1, [r0], #4
+    msr spsr_cxsf, r1
+    msr cpsr_c, #0xD3 // svc
+    ldr sp, [r0], #4
+    ldr lr, [r0], #4
+    ldr r1, [r0], #4
+    msr spsr_cxsf, r1
+    msr cpsr_c, #0xD7 // abt
+    ldr sp, [r0], #4
+    ldr lr, [r0], #4
+    ldr r1, [r0], #4
+    msr spsr_cxsf, r1
+    msr cpsr_c, #0xDB // und
+    ldr sp, [r0], #4
+    ldr lr, [r0], #4
+    ldr r1, [r0], #4
+    msr spsr_cxsf, r1
+    msr cpsr_c, #0xDF // sys
+    ldr sp, [r0], #4
+    ldr lr, [r0], #4
+    msr cpsr_c, #0xD1 // fiq
+    ldmia r0!, {r8-r12, sp, lr}
+    ldr r1, [r0], #4
+    msr spsr_cxsf, r1
+    msr cpsr_c, r2
+    bx lr
+
 .section .rodata.font, "a"
 .balign 4
 .global gFont

@@ -1,5 +1,5 @@
 #pragma once
-// Save state file layout, version 1. One file per game and slot, RTS_STATE_SIZE
+// Save state file layout, version 2. One file per game and slot, RTS_STATE_SIZE
 // (common/sharedMemory.h) bytes, made contiguous by the loader. Offsets are bytes
 // from the start of the file, all sector aligned. The header is written last:
 // a state is valid only when its magic and version match.
@@ -7,13 +7,14 @@
 #include <stdint.h>
 
 #define STATE_MAGIC             0x53545250 // 'PRTS'
-#define STATE_VERSION           1
+#define STATE_VERSION           2 // 2: with the arm7 context
 
 #define STATE_HEADER            0x000000 // state_header_t, 0x200
 #define STATE_ARM9_IO           0x000200 // 0x1100: 0x04000000-0x04000FFF, then 0x04001000-0x040010FF;
                                          // only the readable registers, the rest is 0
 #define STATE_ARM9_IO_SIZE      0x1100
-#define STATE_ARM7_IO           0x001400 // 0x400, reserved for the arm7's registers
+#define STATE_ARM7_IO           0x001400 // 0x400: the arm7 context, ARM7_CTX_* below
+#define ARM7_CTX_SIZE           0x100
 #define STATE_ITCM              0x004000 // 0x8000, read at 0x01FF8000
 #define STATE_DTCM              0x00C000 // 0x4000, read at the dtcm base
 #define STATE_PALETTE           0x010000 // 0x800, 0x05000000
@@ -75,3 +76,23 @@ _Static_assert(sizeof(state_header_t) <= 0x200, "state header is one sector");
 _Static_assert(STATE_ARM9_IO + STATE_ARM9_IO_SIZE <= STATE_ARM7_IO, "io dump fits");
 _Static_assert(STATE_VRAM + 0xA4000 <= STATE_MAIN_RAM, "vram fits");
 _Static_assert(STATE_MAIN_RAM + 0x400000 == STATE_END, "main ram ends the file");
+
+// The arm7 context, as ExitComboArm7PatchCode.s writes and reads it.
+#define ARM7_CTX_MAGIC          0x00 // RTS_MENU_STATE_ARM7_SAVE
+#define ARM7_CTX_SPSR_IRQ       0x04
+#define ARM7_CTX_SP_IRQ         0x08 // at the stub's command loop
+#define ARM7_CTX_SVC            0x0C // spsr, sp, lr
+#define ARM7_CTX_ABT            0x18
+#define ARM7_CTX_UND            0x24
+#define ARM7_CTX_SYS            0x30 // sp, lr
+#define ARM7_CTX_FIQ            0x38 // r8-r12, sp, lr, spsr
+#define ARM7_CTX_IE             0x58
+#define ARM7_CTX_IME            0x5C // as the game had them before the freeze
+#define ARM7_CTX_SOUNDCNT       0x60
+#define ARM7_CTX_IF             0x64
+#define ARM7_CTX_POWCNT2        0x68
+#define ARM7_CTX_SOUNDBIAS      0x6C
+#define ARM7_CTX_TIMERS         0x70 // 4 words, TMxCNT
+#define ARM7_CTX_SOUNDCNT_X     0x80 // 16 words, SOUNDxCNT
+#define ARM7_CTX_WRAM_WORDS     0xC0 // 9 words of the game's under the stub's wait loop
+#define ARM7_CTX_STUB           0xE4 // where the stub was: the same build
