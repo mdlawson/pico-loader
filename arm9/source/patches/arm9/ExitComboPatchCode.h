@@ -1,21 +1,26 @@
 #pragma once
 #include "../PatchCode.h"
 #include "sections.h"
+#include "sharedMemory.h"
 
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_hook);
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_check);
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_wait);
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_teardown);
+DEFINE_SECTION_SYMBOLS(patch_exitcombo_hold);
 
 extern "C" void patch_exitcombo_hook_entry(void);
 extern "C" void patch_exitcombo_check_entry(void);
 extern "C" void patch_exitcombo_wait_entry(void);
 extern "C" void patch_exitcombo_teardown_entry(void);
+extern "C" void patch_exitcombo_hold_entry(void);
 
 extern u32 patch_exitcombo_hook_block_address;
 extern u32 patch_exitcombo_hook_check_address;
 extern u32 patch_exitcombo_hook_table_address;
 extern u32 patch_exitcombo_hook_return_address;
+extern u32 patch_exitcombo_hook_freeze_magic;
+extern u32 patch_exitcombo_wait_hold_address;
 extern u32 patch_exitcombo_check_wait_address;
 extern u32 patch_exitcombo_wait_teardown_address;
 extern u32 patch_exitcombo_teardown_resetpool_address;
@@ -39,14 +44,31 @@ public:
     }
 };
 
-/// @brief Waits for the arm7 to park, or takes the request back when it cancels.
+/// @brief RTS step 1 test: freezes the game for about a second with both
+///        screens white, then lets the arm7 go and resumes.
+class ExitComboHoldPatchCode : public PatchCode
+{
+public:
+    explicit ExitComboHoldPatchCode(PatchHeap& patchHeap)
+        : PatchCode(SECTION_START(patch_exitcombo_hold), SECTION_SIZE(patch_exitcombo_hold), patchHeap) { }
+
+    const void* GetEntryFunction() const
+    {
+        return GetAddressAtTarget((void*)patch_exitcombo_hold_entry);
+    }
+};
+
+/// @brief Waits for the arm7 to park, hold or cancel.
 class ExitComboWaitPatchCode : public PatchCode
 {
 public:
-    ExitComboWaitPatchCode(PatchHeap& patchHeap, const ExitComboTeardownPatchCode* teardown)
+    /// @param hold The freeze test piece, or \c nullptr when it is left out.
+    ExitComboWaitPatchCode(PatchHeap& patchHeap, const ExitComboTeardownPatchCode* teardown,
+        const ExitComboHoldPatchCode* hold)
         : PatchCode(SECTION_START(patch_exitcombo_wait), SECTION_SIZE(patch_exitcombo_wait), patchHeap)
     {
         patch_exitcombo_wait_teardown_address = (u32)teardown->GetEntryFunction();
+        patch_exitcombo_wait_hold_address = hold ? (u32)hold->GetEntryFunction() : 0;
     }
 
     const void* GetEntryFunction() const
@@ -77,9 +99,10 @@ class ExitComboHookPatchCode : public PatchCode
 {
 public:
     ExitComboHookPatchCode(PatchHeap& patchHeap, u32 blockAddress, const ExitComboCheckPatchCode* check,
-        u32 irqTableAddress, u32 irqReturnAddress)
+        u32 irqTableAddress, u32 irqReturnAddress, bool freezeEnabled)
         : PatchCode(SECTION_START(patch_exitcombo_hook), SECTION_SIZE(patch_exitcombo_hook), patchHeap)
     {
+        patch_exitcombo_hook_freeze_magic = freezeEnabled ? EXIT_REQUEST_FREEZE_COMBO_MAGIC : 0xFFFFFFFF;
         patch_exitcombo_hook_block_address = blockAddress;
         patch_exitcombo_hook_check_address = (u32)check->GetEntryFunction();
         patch_exitcombo_hook_table_address = irqTableAddress;

@@ -30,8 +30,8 @@ private:
     u32 _savedTail[2];
     u32 _hookEntry = 0;
     u32* _savedGameWords = nullptr;
-    u32 _savedRegionAddress[7]; // loader_info_t, both reboot code sections and the four pieces
-    u32 _savedRegionSize[7];
+    u32 _savedRegionAddress[8]; // loader_info_t, both reboot code sections, the hold piece and the four pieces
+    u32 _savedRegionSize[8];
     u32 _savedRegionCount = 0;
     u32 _installed = 0;
 };

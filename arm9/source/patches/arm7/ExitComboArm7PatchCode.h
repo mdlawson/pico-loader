@@ -16,6 +16,10 @@ extern u32 patch_exitcombo_arm7_prioreturn_offset;
 extern u32 patch_exitcombo_arm7_sdread_address;
 extern u32 patch_exitcombo_arm7_sdwrite_address;
 
+/// @brief EXIT_REQUEST_FREEZE_COMBO_MAGIC when the arm9 hold piece got installed,
+///        0 otherwise. Set by ExitComboPatch, which runs before the arm7 patcher.
+extern u32 patch_exitcombo_arm7_freeze_magic;
+
 class ExitComboArm7PatchCode : public PatchCode
 {
 public:

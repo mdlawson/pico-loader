@@ -57,13 +57,21 @@ common:
     ldr r2, [r1] // exit_request_block_t::requestMagic
     ldr r3, requestMagic
     cmp r2, r3
+    ldrne r3, freezeRequestMagic
+    cmpne r2, r3
     bne notTaken
     ldr r2, [r12, #8] // saveBusy
     ldr r3, [r12, #12] // savedSinceRequest
     orr r2, r2, r3
     ldr r3, [r12, #16] // saveCooldown
     orrs r2, r2, r3
+    bne cancel
+    ldr r2, [r1]
+    ldr r3, requestMagic
+    cmp r2, r3
     beq park
+    b hold
+cancel:
     ldr r2, parkMagic
     add r2, r2, #1 // EXIT_REQUEST_CANCEL_MAGIC
     str r2, [r1, #0x0C] // exit_request_block_t::comboMagic
@@ -89,7 +97,7 @@ notTaken:
     bhs dropRequest
 
     ldr r2, [r1, #0x0C] // exit_request_block_t::comboMagic
-    ldr r3, comboMagic
+    ldr r3, [r12, #20] // requestKind, the combo magic to publish
     cmp r2, r3
     bne notOut
     // out, but a save has started since: take it back until the saves are quiet
@@ -106,7 +114,7 @@ notOut:
     orrs r2, r2, r3
     bne dispatch
     str r2, [r12, #12] // savedSinceRequest
-    ldr r2, comboMagic
+    ldr r2, [r12, #20] // requestKind
     str r2, [r1, #0x0C] // exit_request_block_t::comboMagic
     b dispatch
 
@@ -118,13 +126,32 @@ dropRequest:
     b dispatch
 
 noRequest:
+    // L+R+Select plus Right is the exit, plus Up the freeze test. Keys are
+    // active low; the keycnt half of the word is never tested.
     ldr r2, regKeyInput
-    ldr r2, [r2] // masked below, so the keycnt half is discarded
-    ldr r3, comboMask
-    ands r2, r2, r3 // keys are active low, 0 = whole combo held
+    ldr r2, [r2]
+    ldr r3, comboCommonMask
+    tst r2, r3
     bne notHeld
+    tst r2, #0x10 // Right
+    ldreq r3, comboMagic
+    beq held
+    tst r2, #0x40 // Up
+    bne notHeld
+    ldr r3, patch_exitcombo_arm7_freeze_magic // 0 without the arm9 hold piece
+    cmp r3, #0
+    beq notHeld
+held:
+    // a different combo than last vblank starts the count again
+    ldr r2, [r12, #20] // requestKind
+    cmp r2, r3
+    strne r3, [r12, #20]
+    movne r2, #0
+    strne r2, [r12] // holdCounter
 
     ldr r2, [r12]
+    cmn r2, #1 // -1: held since the last freeze, wait for a release
+    beq dispatch
     add r2, r2, #1
     str r2, [r12]
     cmp r2, #45
@@ -203,6 +230,88 @@ parkWaitEnd:
 .error "parkWait is copied as nine words"
 .endif
 
+// RTS step 1 test: hold this cpu until the arm9 says RESM, then go on with
+// the game. r1 = block, r12 = holdCounter, r0 = 0, lr = which way in.
+hold:
+    stmfd sp!, {r4-r11, lr}
+    ldr r3, regIme
+    ldr r2, [r3]
+    str r2, [r12, #24] // holdSavedIme
+    mov r2, #0
+    str r2, [r3] // IME = 0, the nested handler may have irqs on
+    ldr r3, regSoundCnt
+    ldrh r2, [r3]
+    str r2, [r12, #28] // holdSavedSoundCnt
+    mov r2, #0
+    strh r2, [r3] // master sound off while frozen
+    ldr r3, regIf
+    ldr r2, [r3]
+    str r2, [r12, #32] // holdSavedIf
+
+    // Wait from arm7 wram (see park), in the eight words under the game's
+    // stacks, which are kept here and put back after.
+    ldr r0, parkWaitAddress
+    add r2, r12, #36 // holdStash
+    ldmia r0, {r3-r10}
+    stmia r2, {r3-r10}
+    adr r2, holdWait
+    ldmia r2, {r3-r10}
+    stmia r0, {r3-r10}
+
+    ldr r2, parkMagic
+    add r2, r2, #2 // EXIT_REQUEST_HOLD_MAGIC
+    str r2, [r1, #0x0C] // exit_request_block_t::comboMagic
+    ldr r2, resumeMagic
+    mov lr, pc
+    bx r0
+
+    adr r12, holdCounter
+    ldr r0, parkWaitAddress
+    add r2, r12, #36 // holdStash
+    ldmia r2, {r3-r10}
+    stmia r0, {r3-r10}
+
+    ldr r3, regSoundCnt
+    ldr r2, [r12, #28] // holdSavedSoundCnt
+    strh r2, [r3]
+    // drop the vblank, hblank and vcount irqs that came in while frozen
+    ldr r3, regIf
+    ldr r2, [r3]
+    ldr r0, [r12, #32] // holdSavedIf
+    bic r2, r2, r0
+    and r2, r2, #7
+    str r2, [r3]
+
+    mov r2, #0
+    str r2, [r12, #4] // requestFrames
+    mvn r2, #0
+    str r2, [r12] // holdCounter = -1, the combo has to be released first
+    mov r2, #0
+    str r2, [r1, #0x0C] // exit_request_block_t::comboMagic = 0, back in the game
+    ldr r3, regIme
+    ldr r2, [r12, #24] // holdSavedIme
+    str r2, [r3]
+    ldmfd sp!, {r4-r11, lr}
+    mov r0, #0 // the vblank index
+    b dispatch
+
+// Copied to arm7 wram, so nothing pc relative. r1 = block, r2 = RESM.
+holdWait:
+1:
+    mov r3, #0x400
+2:
+    subs r3, r3, #1
+    bne 2b
+    ldr r3, [r1] // exit_request_block_t::requestMagic
+    cmp r3, r2
+    bne 1b
+    bx lr
+    .word 0
+holdWaitEnd:
+.if holdWaitEnd - holdWait != 8 * 4
+.error "holdWait is copied as eight words"
+.endif
+
 dispatch:
     cmp lr, #0
     bne prioReturn
@@ -268,8 +377,11 @@ callR3:
 regKeyInput:
     .word 0x04000130
 
-comboMask:
-    .word 0x0314 // L | R | Right | Select
+comboCommonMask:
+    .word 0x0304 // L | R | Select
+
+regIf:
+    .word 0x04000214
 
 regIme:
     .word 0x04000208
@@ -294,6 +406,12 @@ regIrqVector:
 requestMagic:
     .word 0x54495845 // EXIT_REQUEST_REQUEST_MAGIC
 
+freezeRequestMagic:
+    .word 0x555E4540 // EXIT_REQUEST_FREEZE_REQUEST_MAGIC
+
+resumeMagic:
+    .word 0x4D534552 // EXIT_REQUEST_RESUME_MAGIC
+
 pathMagic:
     .word 0x58454C50 // EXIT_REQUEST_PATH_MAGIC
 
@@ -316,6 +434,26 @@ savedSinceRequest:
     .word 0
 
 saveCooldown:
+    .word 0
+
+requestKind: // holdCounter + 20
+    .word 0
+
+holdSavedIme: // holdCounter + 24
+    .word 0
+
+holdSavedSoundCnt: // + 28
+    .word 0
+
+holdSavedIf: // + 32
+    .word 0
+
+holdStash: // + 36, eight words
+    .space 32
+
+// EXIT_REQUEST_FREEZE_COMBO_MAGIC when the arm9 hold piece is in, 0 otherwise
+.global patch_exitcombo_arm7_freeze_magic
+patch_exitcombo_arm7_freeze_magic:
     .word 0
 
 .global patch_exitcombo_arm7_block_address
