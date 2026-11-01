@@ -212,6 +212,20 @@ static void drawStatus(const char* text, u16 ink)
 
 static void drawProgress(u32 done, u32 total)
 {
+    // the step as text too, so a stop can be told apart from a slow step
+    char count[8];
+    int n = 0;
+    if (done >= 10)
+        count[n++] = '0' + done / 10 % 10;
+    count[n++] = '0' + done % 10;
+    count[n++] = '/';
+    if (total >= 10)
+        count[n++] = '0' + total / 10 % 10;
+    count[n++] = '0' + total % 10;
+    while (n < 7)
+        count[n++] = ' ';
+    count[n] = 0;
+    drawText(SCREEN_W - 8 - 7 * 8, STATUS_Y, count, COLOR_DIM, COLOR_BG);
     const int x = 8, y = STATUS_Y + 18, w = SCREEN_W - 16, h = 6;
     int filled = (int)(done * (u32)w / total);
     fillRect(x, y, filled, h, COLOR_BAR);

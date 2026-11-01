@@ -380,7 +380,45 @@ static const u16 sIoRestore[][2] =
     { 0x210, 4 },                                               // IE
 };
 
-const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* broken)
+#define MAIN_STEP_DO(x) do { if (progress) { if (!(x)) return 0; progress(++*done, total); } else ++*done; } while (0)
+// Main ram around the keep ranges (offsets from 0x02000000): with progress 0
+// it only counts the steps. Returns 0 when a read failed.
+static int restoreMainRam(u32 keep[3][2], void (*progress)(u32 done, u32 total), u32* done, u32 total)
+{
+    for (u32 ram = 0; ram < 0x400000; )
+    {
+        u32 step = MAIN_STEP - (ram % MAIN_STEP);
+        int around = -1;
+        for (int k = 0; k < 3; k++)
+        {
+            u32 start = keep[k][0] & ~511, end = (keep[k][1] + 511) & ~511;
+            if (start == end)
+                continue;
+            if (ram >= start && ram < end)
+                around = k;
+            else if (ram < start && ram + step > start)
+                step = start - ram;
+        }
+        if (around == 0)
+        {
+            ram = keep[0][1]; // the stash window is whole sectors
+            continue;
+        }
+        if (around > 0)
+        {
+            MAIN_STEP_DO(restoreSectorAround(ram, keep[around][0], keep[around][1]));
+            ram += 512;
+            continue;
+        }
+        if (ram + step > 0x400000)
+            step = 0x400000 - ram;
+        MAIN_STEP_DO(readState(STATE_MAIN_RAM + ram, 0x02000000 + ram, step));
+        ram += step;
+    }
+    return 1;
+}
+
+static const char* load(void* block, void (*progress)(u32 done, u32 total), int* broken)
 {
     *broken = 0;
     const char* problem = stateCheck(block);
@@ -388,10 +426,28 @@ const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* b
         return problem;
     const state_header_t* h = &sHeader;
 
-    const u32 total = 12 + 0x400000 / MAIN_STEP + RTS_STASH_SIZE / SCRATCH_SIZE + 4;
+    // Main ram, around: the stash window (through the stash file below), the
+    // block (the live handshake) and the arm7 patch space if it is in main
+    // memory (its sd routines are running).
+    u32 keep[3][2] =
+    {
+        { RTS_BASE - 0x02000000, RTS_BASE - 0x02000000 + RTS_STASH_SIZE },
+        { (u32)block & 0x3FFFFF, ((u32)block & 0x3FFFFF) + RTS_INFO_OFFSET + sizeof(rts_info_t) },
+        { 0, 0 },
+    };
+    if (sRts->arm7PatchStart >= 0x02000000 && sRts->arm7PatchStart < 0x03000000)
+    {
+        keep[2][0] = sRts->arm7PatchStart & 0x3FFFFF;
+        keep[2][1] = keep[2][0] + sRts->arm7PatchSize;
+    }
+    u32 mainSteps = 0;
+    restoreMainRam(keep, 0, &mainSteps, 0);
+    // arm7 3, shared wram 2, tcms 2, palette and oam 2, vram 9, main ram,
+    // stash 2 per part, io 1
+    const u32 total = 18 + mainSteps + 2 * (RTS_STASH_SIZE / SCRATCH_SIZE) + 1;
     u32 done = 0;
     *broken = 1; // from here on the game's memory changes
-#define STEP(x) do { if (!(x)) return "read failed"; progress(++done < total ? done : total, total); } while (0)
+#define STEP(x) do { if (!(x)) return "read failed"; progress(++done, total); } while (0)
 
     // arm7 wram and the arm7's context, through the vram A copy (filled later)
     u32 arm7Buffer = (u32)__vram_copy;
@@ -415,7 +471,9 @@ const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* b
     u32 dtcm = cp15Read(1) & ~0xFFF;
     STEP(readStateToArm9(STATE_DTCM, (volatile void*)dtcm, 0x4000));
 
+    u16 menuBackdrop = *(vu16*)0x05000400; // the bottom screen stays the menu's until it leaves
     STEP(readStateToArm9(STATE_PALETTE, (volatile void*)0x05000000, 0x800));
+    *(vu16*)0x05000400 = menuBackdrop;
     STEP(readStateToArm9(STATE_OAM, (volatile void*)0x07000000, 0x800));
 
     // vram: A into the copy the menu puts back when it leaves, the rest in place
@@ -437,50 +495,8 @@ const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* b
         offset += sBanks[i].size;
     }
 
-    // Main ram, around: the stash window (through the stash file below), the
-    // block (the live handshake) and the arm7 patch space if it is in main
-    // memory (its sd routines are running).
-    u32 keep[3][2] =
-    {
-        { RTS_BASE - 0x02000000, RTS_BASE - 0x02000000 + RTS_STASH_SIZE },
-        { (u32)block & 0x3FFFFF, ((u32)block & 0x3FFFFF) + RTS_INFO_OFFSET + sizeof(rts_info_t) },
-        { 0, 0 },
-    };
-    if (sRts->arm7PatchStart >= 0x02000000 && sRts->arm7PatchStart < 0x03000000)
-    {
-        keep[2][0] = sRts->arm7PatchStart & 0x3FFFFF;
-        keep[2][1] = keep[2][0] + sRts->arm7PatchSize;
-    }
-    for (u32 ram = 0; ram < 0x400000; )
-    {
-        u32 step = MAIN_STEP - (ram % MAIN_STEP);
-        int around = -1;
-        for (int k = 0; k < 3; k++)
-        {
-            u32 start = keep[k][0] & ~511, end = (keep[k][1] + 511) & ~511;
-            if (start == end)
-                continue;
-            if (ram >= start && ram < end)
-                around = k;
-            else if (ram < start && ram + step > start)
-                step = start - ram;
-        }
-        if (around == 0)
-        {
-            ram = keep[0][1]; // the stash window is whole sectors
-            continue;
-        }
-        if (around > 0)
-        {
-            STEP(restoreSectorAround(ram, keep[around][0], keep[around][1]));
-            ram += 512;
-            continue;
-        }
-        if (ram + step > 0x400000)
-            step = 0x400000 - ram;
-        STEP(readState(STATE_MAIN_RAM + ram, 0x02000000 + ram, step));
-        ram += step;
-    }
+    if (!restoreMainRam(keep, progress, &done, total))
+        return "read failed";
     for (u32 part = 0; part < RTS_STASH_SIZE; part += SCRATCH_SIZE)
     {
         STEP(readState(STATE_MAIN_RAM + keep[0][0] + part, (u32)__scratch, SCRATCH_SIZE));
@@ -520,4 +536,17 @@ const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* b
     *broken = 0;
     return 0;
 #undef STEP
+}
+
+const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* broken)
+{
+    // The game's protection unit can keep the arm9 out of parts of main ram:
+    // SDK games give the arm7's top 128 KB (0x023E0000) no arm9 access, and the
+    // block's sector is there. The menu runs privileged, so open every region
+    // to privileged reads and writes while it loads, then put the game's back.
+    u32 permissions = cp15Read(6);
+    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(0x11111111) : "memory");
+    const char* problem = load(block, progress, broken);
+    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(permissions) : "memory");
+    return problem;
 }
