@@ -129,6 +129,8 @@ struct rts_info_t
 };
 
 static_assert(sizeof(rts_info_t) == 0x20);
+// the arm7 stub stores the menu's exit answer as the exit request as it is
+static_assert(RTS_MENU_STATE_EXIT == EXIT_REQUEST_REQUEST_MAGIC);
 
 /// @brief Block used to request an in-game exit to the launcher.
 ///        The loader fills pathMagic, pathChecksum and launcherPath at boot;

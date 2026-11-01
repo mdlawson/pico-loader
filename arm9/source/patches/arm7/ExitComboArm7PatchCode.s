@@ -308,6 +308,9 @@ hold:
     mov r12, r5
     ldr r2, menuStateExit
     cmp r6, r2
+    // The rebooted loader goes to the launcher only for an EXIT request, and a
+    // freeze left FREZ there: anything else counts as the game resetting itself.
+    streq r6, [r1] // exit_request_block_t::requestMagic = EXIT, the same word
     beq park // r1 = block; never comes back, the stack does not matter
     b holdEnd
 
