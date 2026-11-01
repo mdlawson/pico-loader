@@ -99,6 +99,11 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 // shared block: rts_info_t::menuState goes RTS_MENU_STATE_RESUME or _EXIT, the
 // arm7 acknowledges by moving comboMagic off RUN, and the menu's very last act is
 // RTS_MENU_STATE_LEFT, after which the arm7 may put the stash back.
+// Size of the arm7 patch heap. Arm7Patcher (arm9) reserves it and NdsLoader (arm7)
+// copies it into place when it lands in arm7 wram, so both must use this one value.
+// The exit combo with the rts takes about 0x550 of it.
+#define ARM7_PATCH_SPACE_SIZE       0xC00
+
 #define EXIT_REQUEST_RUN_MAGIC      (EXIT_REQUEST_PARK_MAGIC + 2)
 #define RTS_INFO_MAGIC              0x31535452 // 'RTS1'
 #define RTS_BASE                    0x02100000

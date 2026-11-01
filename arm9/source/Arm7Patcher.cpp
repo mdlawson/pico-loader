@@ -89,7 +89,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             ErrorDisplay().PrintError("Failed to apply arm7 patches.");
         }
 
-        const u32 arm7PatchSpaceSize = 0xC00; // the exit combo with the rts takes about 0x550
+        const u32 arm7PatchSpaceSize = ARM7_PATCH_SPACE_SIZE;
         void* privateWramHeapStart = arm7ArenaPatch->GetArm7PrivateWramArenaLo();
         u32 mainMemoryArenaLo = (u32)arm7ArenaPatch->GetMainMemoryArenaLo();
         if (0x0380F780 - (u32)privateWramHeapStart - 0x2100 >= arm7PatchSpaceSize)

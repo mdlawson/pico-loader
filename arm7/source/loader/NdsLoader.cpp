@@ -670,7 +670,7 @@ void NdsLoader::ApplyArm7Patches()
             REG_MBK8 = 0;
         }
 
-        const u32 patchSpaceSize = 2 * 1024;
+        const u32 patchSpaceSize = ARM7_PATCH_SPACE_SIZE;
         auto patchCode = std::make_unique_for_overwrite<u8[]>(patchSpaceSize);
         void* srcAddress = (void*)(((u32)patchSpaceStart & 0x7FFF) + 0x037F8000);
         if ((u32)srcAddress + patchSpaceSize > 0x03800000)
