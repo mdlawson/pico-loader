@@ -86,6 +86,19 @@ patch_exitcombo_check_entry:
     tst r12, #1
     strbne r2, [r3, #0x181] // REG_IPC_SYNC data out
 
+    // Write the whole data cache back, so the arm7 sees the game's main memory
+    // as it is: an rts stashes part of it. Clean and invalidate by set/way,
+    // 4 ways of 32 lines of 32 bytes; r0 ends at 0 again.
+    mov r0, #0
+3:
+    mcr p15, 0, r0, c7, c14, 2
+    add r0, r0, #0x20
+    tst r0, #0x400
+    beq 3b
+    bic r0, r0, #0x400
+    adds r0, r0, #0x40000000
+    bcc 3b
+
     str r12, [r1] // exit_request_block_t::requestMagic
     mcr p15, 0, r1, c7, c10, 1 // clean dcache entry by MVA
     mcr p15, 0, r2, c7, c10, 4 // drain write buffer
@@ -111,10 +124,19 @@ patch_exitcombo_wait_entry:
 2:
     subs r12, r12, #1
     bne 2b
+    // Drop what the instruction cache holds before acting on the answer: on RUN
+    // the rts menu is where game code may have been cached, and after one it is
+    // the other way round.
+    mcr p15, 0, r2, c7, c5, 0 // invalidate the whole icache
     mcr p15, 0, r1, c7, c6, 1 // invalidate the line
     ldr r12, [r1, #0x0C] // exit_request_block_t::comboMagic
-    subs r12, r12, r0 // 0 = parked, 1 = cancelled (also the end of a freeze)
+    subs r12, r12, r0 // 0 = parked, 1 = cancelled (also the end of a freeze), 2 = run
     ldreq pc, patch_exitcombo_wait_teardown_address
+    // RUN: the arm7 has loaded the rts menu at rts_info_t::base. It comes back
+    // here (r0) with r1-r3 and lr as they are now, once the arm7 took its answer.
+    cmp r12, #2
+    adreq r0, patch_exitcombo_wait_entry
+    ldreq pc, [r1, #0x114] // exit_request_block_t::rts.base
     cmp r12, #1
     bne 1b
 

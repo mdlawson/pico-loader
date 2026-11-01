@@ -5,6 +5,7 @@
 #include "DsiWareSaveArranger.h"
 #include "BootMode.h"
 #include "ConsoleRegion.h"
+#include "sharedMemory.h"
 #include "UserLanguage.h"
 
 struct dsi_devicelist_entry_t;
@@ -76,6 +77,7 @@ private:
     void LoadFirmwareUserSettings();
     bool ShouldAttemptDldiPatch();
     void WriteExitRequestBlock();
+    void SetupRealTimeSave(rts_info_t& rts);
     void ClearMainMemory();
     void CreateRomClusterTable();
     bool TryLoadRomHeader(u32 romOffset);

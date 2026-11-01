@@ -42,7 +42,7 @@ common:
 
     // the state words below: hold counter, request age and the save state the
     // wrappers at the end keep; the save cooldown loses a frame every vblank
-    adr r12, holdCounter
+    adrl r12, holdCounter
     ldr r2, [r12, #16] // saveCooldown
     subs r2, r2, #1
     strhs r2, [r12, #16]
@@ -228,48 +228,104 @@ parkWaitEnd:
 .error "parkWait is copied as nine words"
 .endif
 
-// RTS step 1 test: hold the game for about a second, then let it go on.
-// r1 = block, r12 = holdCounter, r0 = 0, lr = which way in.
-// The arm9 is waiting in its wait piece with irqs off. It sees nothing but the
-// FRZC it reacted to until this side answers CANCEL, which sends it down the
-// path that gives the game back its irqs.
+// Freeze: r1 = block, r12 = holdCounter, r0 = 0, lr = which way in.
+// The arm9 is in its wait piece with irqs off, its data cache written back.
+// With the rts info from the loader and the save code's sd routines this runs
+// the rts menu (step 2): stash RTS_STASH_SIZE bytes of main memory at
+// rts.base, load the menu there and answer RUN, wait for the menu's answer and
+// for it to have left, put the stash back, then CANCEL (resume) or park (exit).
+// Without them it only holds for a second (step 1).
 hold:
     stmfd sp!, {r4-r11, lr}
+    mov r4, r1 // block, kept across the sd calls
+    mov r5, r12 // state words
     ldr r3, regIme
     ldr r2, [r3]
-    str r2, [r12, #24] // holdSavedIme
+    str r2, [r5, #24] // holdSavedIme
     mov r2, #0
     str r2, [r3] // IME = 0, the nested handler may have irqs on
     ldr r3, regSoundCnt
     ldrh r2, [r3]
-    str r2, [r12, #28] // holdSavedSoundCnt
+    str r2, [r5, #28] // holdSavedSoundCnt
     mov r2, #0
     strh r2, [r3] // master sound off while frozen
     ldr r3, regIf
     ldr r2, [r3]
-    str r2, [r12, #32] // holdSavedIf
+    str r2, [r5, #32] // holdSavedIf
 
-    // Count the second out from arm7 wram (see park), in the nine words under
-    // the game's stacks, which are kept here and put back after. Polling only
-    // VCOUNT keeps this cpu off main memory altogether.
+    ldr r2, [r4, #0x110] // rts.magic
+    ldr r3, rtsInfoMagic
+    cmp r2, r3
+    bne timedHold
+    ldr r2, patch_exitcombo_arm7_sdread_address
+    ldr r3, patch_exitcombo_arm7_sdwrite_address
+    cmp r2, #0
+    cmpne r3, #0
+    beq timedHold
+
+    ldr r0, [r4, #0x118] // rts.stashSector
+    ldr r1, [r4, #0x114] // rts.base
+    ldr r2, [r4, #0x11C] // rts.stashSectorCount
+    ldr r3, patch_exitcombo_arm7_sdwrite_address
+    bl callThumb
+    ldr r0, [r4, #0x120] // rts.menuSector
+    ldr r1, [r4, #0x114]
+    ldr r2, [r4, #0x124] // rts.menuSectorCount
+    ldr r3, patch_exitcombo_arm7_sdread_address
+    bl callThumb
+
+    mov r2, #0
+    str r2, [r4, #0x128] // rts.menuState
+    ldr r2, parkMagic
+    add r2, r2, #2 // EXIT_REQUEST_RUN_MAGIC: the arm9 jumps to rts.base
+    str r2, [r4, #0x0C]
+
+    // Wait from arm7 wram (see park) for the menu's answer, then for it to
+    // leave: it says LEFT with the last instructions it runs from the stash.
+    adrl r1, menuWait
+    bl copyWramWait
+    mov r1, r4
+    mov r2, #0
+    mov lr, pc
+    bx r0 // returns the answer in r0
+    mov r6, r0
+    ldr r2, freezeComboMagic
+    str r2, [r4, #0x0C] // off RUN: the menu may leave
+    mov r1, r4
+    mov r2, r6
     ldr r0, parkWaitAddress
-    add r2, r12, #36 // holdStash
-    ldmia r0, {r3-r11}
-    stmia r2, {r3-r11}
-    adr r2, holdWait
-    ldmia r2, {r3-r11}
-    stmia r0, {r3-r11}
+    mov lr, pc
+    bx r0 // until LEFT
+    bl restoreWram
+
+    ldr r0, [r4, #0x118]
+    ldr r1, [r4, #0x114]
+    ldr r2, [r4, #0x11C]
+    ldr r3, patch_exitcombo_arm7_sdread_address
+    bl callThumb // the game's main memory back
+
+    mov r1, r4
+    mov r12, r5
+    ldr r2, menuStateExit
+    cmp r6, r2
+    beq park // r1 = block; never comes back, the stack does not matter
+    b holdEnd
+
+timedHold:
+    // Count the second out from arm7 wram (see park). Polling only VCOUNT keeps
+    // this cpu off main memory altogether.
+    adrl r1, holdWait
+    bl copyWramWait
     mov r2, #60 // frames
     mov r3, #0x04000000
     mov lr, pc
     bx r0
+    bl restoreWram
+    mov r1, r4
+    mov r12, r5
 
-    adr r12, holdCounter
-    ldr r0, parkWaitAddress
-    add r2, r12, #36 // holdStash
-    ldmia r2, {r3-r11}
-    stmia r0, {r3-r11}
-
+holdEnd:
+    // r1 = block, r12 = state words
     ldr r3, regSoundCnt
     ldr r2, [r12, #28] // holdSavedSoundCnt
     strh r2, [r3]
@@ -294,6 +350,61 @@ hold:
     ldmfd sp!, {r4-r11, lr}
     mov r0, #0 // the vblank index
     b dispatch
+
+// Keeps the nine game words at parkWaitAddress and puts the nine word wait
+// loop at r1 there instead. Returns r0 = parkWaitAddress. Uses r2, r3, r12.
+copyWramWait:
+    ldr r0, parkWaitAddress
+    adrl r12, holdStash
+    mov r3, #0
+1:
+    ldr r2, [r0, r3]
+    str r2, [r12, r3]
+    ldr r2, [r1, r3]
+    str r2, [r0, r3]
+    add r3, r3, #4
+    cmp r3, #36
+    bne 1b
+    bx lr
+
+// Puts the nine game words back at parkWaitAddress. Uses r0, r2, r3, r12.
+restoreWram:
+    ldr r0, parkWaitAddress
+    adrl r12, holdStash
+    mov r3, #0
+1:
+    ldr r2, [r12, r3]
+    str r2, [r0, r3]
+    add r3, r3, #4
+    cmp r3, #36
+    bne 1b
+    bx lr
+
+// From arm7 thumb code's point of view this is an ordinary call: r3 = the thumb
+// routine, r0-r2 its arguments. The platform sd routines return with a thumb
+// pop, so they must be called from thumb.
+callThumb:
+    adr r12, thumbCall + 1
+    bx r12
+
+// Copied to arm7 wram, so nothing pc relative. r1 = block, r2 = the value to
+// wait to change. Returns the new rts.menuState in r0. The pause between reads
+// keeps this off main memory, which the arm9 needs meanwhile.
+menuWait:
+1:
+    mov r3, #0x400
+2:
+    subs r3, r3, #1
+    bne 2b
+    ldr r0, [r1, #0x128] // rts.menuState
+    cmp r0, r2
+    beq 1b
+    bx lr
+    .word 0, 0
+menuWaitEnd:
+.if menuWaitEnd - menuWait != 9 * 4
+.error "menuWait is copied as nine words"
+.endif
 
 // Copied to arm7 wram, so nothing pc relative. r2 = frames, r3 = 0x04000000.
 holdWait:
@@ -373,6 +484,13 @@ saveCall:
 callR3:
     bx r3
 
+// Called from arm code by callThumb with lr = the arm return address.
+thumbCall:
+    push {lr}
+    bl callR3
+    pop {r3}
+    bx r3
+
 .balign 4
 
 regKeyInput:
@@ -412,6 +530,12 @@ freezeRequestMagic:
 
 freezeComboMagic:
     .word 0x435A5246 // EXIT_REQUEST_FREEZE_COMBO_MAGIC
+
+rtsInfoMagic:
+    .word 0x31535452 // RTS_INFO_MAGIC
+
+menuStateExit:
+    .word 0x54495845 // RTS_MENU_STATE_EXIT
 
 pathMagic:
     .word 0x58454C50 // EXIT_REQUEST_PATH_MAGIC

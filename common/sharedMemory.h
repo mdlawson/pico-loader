@@ -1,5 +1,6 @@
 #pragma once
 #include <nds/ndstypes.h>
+#include <stddef.h>
 
 #define BOOT_TYPE_INVALID   0
 #define BOOT_TYPE_CARD      1
@@ -92,6 +93,38 @@ static_assert(EXIT_REQUEST_FREEZE_REQUEST_MAGIC == 0x555E4540);
 static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_MAGIC & 1));
 #define EXIT_REQUEST_CHECKSUM_XOR   0x5A5A5A5A
 
+// RTS step 2: the arm7 stashes RTS_STASH_SIZE bytes of main memory at RTS_BASE to
+// RTS_STASH_PATH, loads RTS_MENU_PATH there and answers RUN, upon which the arm9
+// wait piece jumps to RTS_BASE. The menu tells the arm7 its choice through the
+// shared block: rts_info_t::menuState goes RTS_MENU_STATE_RESUME or _EXIT, the
+// arm7 acknowledges by moving comboMagic off RUN, and the menu's very last act is
+// RTS_MENU_STATE_LEFT, after which the arm7 may put the stash back.
+#define EXIT_REQUEST_RUN_MAGIC      (EXIT_REQUEST_PARK_MAGIC + 2)
+#define RTS_INFO_MAGIC              0x31535452 // 'RTS1'
+#define RTS_BASE                    0x02100000
+#define RTS_STASH_SIZE              0x10000
+#define RTS_STASH_PATH              "/_pico/rtsstash.bin"
+#define RTS_MENU_PATH               "/_pico/rtsmenu9.bin"
+#define RTS_MENU_STATE_RESUME       0x4D534552 // 'RESM'
+#define RTS_MENU_STATE_EXIT         0x54495845 // 'EXIT'
+#define RTS_MENU_STATE_LEFT         0x5446454C // 'LEFT'
+
+/// @brief Where the arm7 finds the stash file and the menu on the sd card.
+///        Both are single contiguous runs of sectors, checked by the loader at boot.
+struct rts_info_t
+{
+    u32 magic;          // RTS_INFO_MAGIC when the rest is valid
+    u32 base;           // RTS_BASE; the arm9 wait piece jumps here (block + 0x114)
+    u32 stashSector;
+    u32 stashSectorCount;
+    u32 menuSector;
+    u32 menuSectorCount;
+    u32 menuState;      // 0 while the menu runs, then RTS_MENU_STATE_* (block + 0x128)
+    u32 reserved;
+};
+
+static_assert(sizeof(rts_info_t) == 0x20);
+
 /// @brief Block used to request an in-game exit to the launcher.
 ///        The loader fills pathMagic, pathChecksum and launcherPath at boot;
 ///        the arm9 exit combo patch code only ever writes requestMagic, and the
@@ -115,9 +148,15 @@ struct exit_request_block_t
     u32 comboMagic;
 
     char launcherPath[256];
+
+    /// @brief RTS step 2, filled by the loader at boot next to the launcher path.
+    rts_info_t rts;
 };
 
-static_assert(sizeof(exit_request_block_t) == 0x110);
+static_assert(sizeof(exit_request_block_t) == 0x130);
+static_assert(offsetof(exit_request_block_t, rts) == 0x110);
+static_assert(offsetof(exit_request_block_t, rts.base) == 0x114);
+static_assert(offsetof(exit_request_block_t, rts.menuState) == 0x128);
 
 static inline u32 exit_request_calcChecksum(const char (&launcherPath)[256])
 {
