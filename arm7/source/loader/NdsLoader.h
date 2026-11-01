@@ -78,6 +78,7 @@ private:
     bool ShouldAttemptDldiPatch();
     void WriteExitRequestBlock();
     void SetupRealTimeSave(rts_info_t& rts);
+    const char* SetupRealTimeSaveFiles(rts_info_t& rts, char* status, u32 statusSize);
     void ClearMainMemory();
     void CreateRomClusterTable();
     bool TryLoadRomHeader(u32 romOffset);

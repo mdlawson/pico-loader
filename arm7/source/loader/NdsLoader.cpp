@@ -29,6 +29,7 @@
 #include "Arm7IoRegisterClearer.h"
 #include "PatchListFactory.h"
 #include "CheatPreprocessor.h"
+#include "core/mini-printf.h"
 #include "NdsLoader.h"
 
 #define AP_LIST_PATH      "/_pico/aplist.bin"
@@ -834,67 +835,104 @@ static u32 getContiguousFileSector(FIL* file)
 }
 
 // Real-time save: the freeze combo stashes RTS_STASH_SIZE bytes of main memory
-// at RTS_BASE in a file and runs the rts menu there. Both files have to be
-// contiguous; without them the freeze combo only holds the game for a second.
-void NdsLoader::SetupRealTimeSave(rts_info_t& rts)
+// at RTS_BASE in a file and runs the rts menu there. The arm7 stub reaches both
+// by sector, so the loader keeps them in one file made as a single run of
+// clusters: the stash, then a copy of the menu (rewritten every boot, so a
+// fragmented or updated menu file does not matter). Without it the freeze
+// combo only holds the game for a second. Every boot leaves RTS_STATUS_PATH
+// saying which of the two it is and why.
+const char* NdsLoader::SetupRealTimeSaveFiles(rts_info_t& rts, char* status, u32 statusSize)
 {
     auto file = std::make_unique<FIL>();
     if (f_open(file.get(), RTS_MENU_PATH, FA_OPEN_EXISTING | FA_READ) != FR_OK)
     {
-        LOG_DEBUG("No rts menu\n");
-        return;
+        return "no " RTS_MENU_PATH;
     }
     u32 menuSize = f_size(file.get());
-    u32 menuSector = getContiguousFileSector(file.get());
-    f_close(file.get());
-    if (menuSize == 0 || menuSize > RTS_MENU_MAX_SIZE || menuSector == 0)
+    if (menuSize == 0 || menuSize > RTS_MENU_MAX_SIZE)
     {
-        LOG_WARNING("Rts menu unusable: size 0x%X, sector 0x%X\n", menuSize, menuSector);
-        return;
+        f_close(file.get());
+        return RTS_MENU_PATH " is empty or bigger than 32 KB";
+    }
+    auto menu = std::make_unique<u8[]>(menuSize);
+    UINT bytesRead = 0;
+    bool menuRead = f_read(file.get(), menu.get(), menuSize, &bytesRead) == FR_OK && bytesRead == menuSize;
+    f_close(file.get());
+    if (!menuRead)
+    {
+        return "could not read " RTS_MENU_PATH;
     }
 
     if (f_open(file.get(), RTS_STASH_PATH, FA_OPEN_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
     {
-        LOG_WARNING("Failed to open or create the rts stash\n");
-        return;
+        return "could not open or create " RTS_STASH_PATH;
     }
-    u32 stashSize = f_size(file.get());
-    if (stashSize < RTS_STASH_SIZE)
+    // Reuse the file when it is the right size and in one piece; otherwise make
+    // it again as one block of clusters.
+    const u32 fileSize = RTS_STASH_SIZE + RTS_MENU_MAX_SIZE;
+    u32 stashSector = 0;
+    bool remade = false;
+    if (f_size(file.get()) == fileSize)
     {
-        // fresh clusters for the whole file, so it ends up in one piece
-        const u32 zeroBufferSize = 4096;
-        auto zeroBuffer = std::make_unique<u8[]>(zeroBufferSize);
-        memset(zeroBuffer.get(), 0, zeroBufferSize);
-        bool written = f_lseek(file.get(), 0) == FR_OK && f_truncate(file.get()) == FR_OK;
-        for (u32 offset = 0; written && offset < RTS_STASH_SIZE; offset += zeroBufferSize)
-        {
-            UINT bytesWritten = 0;
-            written = f_write(file.get(), zeroBuffer.get(), zeroBufferSize, &bytesWritten) == FR_OK &&
-                bytesWritten == zeroBufferSize;
-        }
-        if (!written || f_sync(file.get()) != FR_OK)
-        {
-            LOG_WARNING("Failed to expand the rts stash\n");
-            f_close(file.get());
-            return;
-        }
+        stashSector = getContiguousFileSector(file.get());
     }
-    u32 stashSector = getContiguousFileSector(file.get());
-    f_close(file.get());
     if (stashSector == 0)
     {
-        LOG_WARNING("Rts stash is fragmented, delete it to have it made again\n");
-        return;
+        remade = true;
+        if (f_lseek(file.get(), 0) != FR_OK ||
+            f_truncate(file.get()) != FR_OK ||
+            f_expand(file.get(), fileSize, 1) != FR_OK ||
+            f_sync(file.get()) != FR_OK)
+        {
+            f_close(file.get());
+            return "could not make " RTS_STASH_PATH " as one piece (no free run of 224 KB?)";
+        }
+        stashSector = getContiguousFileSector(file.get());
+    }
+    UINT bytesWritten = 0;
+    bool menuWritten = stashSector != 0 &&
+        f_lseek(file.get(), RTS_STASH_SIZE) == FR_OK &&
+        f_write(file.get(), menu.get(), menuSize, &bytesWritten) == FR_OK &&
+        bytesWritten == menuSize;
+    if (f_close(file.get()) != FR_OK || stashSector == 0)
+    {
+        return RTS_STASH_PATH " is not in one piece";
+    }
+    if (!menuWritten)
+    {
+        return "could not copy the menu into " RTS_STASH_PATH;
     }
 
     rts.base = RTS_BASE;
     rts.stashSector = stashSector;
     rts.stashSectorCount = RTS_STASH_SIZE / 512;
-    rts.menuSector = menuSector;
+    rts.menuSector = stashSector + RTS_STASH_SIZE / 512;
     rts.menuSectorCount = (menuSize + 511) / 512;
     rts.menuState = 0;
     rts.magic = RTS_INFO_MAGIC;
-    LOG_DEBUG("Rts: stash at sector 0x%X, menu at sector 0x%X\n", stashSector, menuSector);
+    mini_snprintf(status, statusSize,
+        "ok: rts menu on L+R+Up+Select. Menu %u bytes, stash at sector %u%s.\r\n",
+        menuSize, stashSector, remade ? " (stash file made this boot)" : "");
+    return nullptr;
+}
+
+void NdsLoader::SetupRealTimeSave(rts_info_t& rts)
+{
+    char status[192];
+    const char* problem = SetupRealTimeSaveFiles(rts, status, sizeof(status));
+    if (problem)
+    {
+        memset(&rts, 0, sizeof(rts));
+        mini_snprintf(status, sizeof(status), "off: %s. L+R+Up+Select only pauses for a second.\r\n", problem);
+    }
+    LOG_DEBUG("Rts: %s", status);
+    FIL file;
+    UINT bytesWritten = 0;
+    if (f_open(&file, RTS_STATUS_PATH, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+    {
+        f_write(&file, status, strlen(status), &bytesWritten);
+        f_close(&file);
+    }
 }
 
 void NdsLoader::ClearMainMemory()

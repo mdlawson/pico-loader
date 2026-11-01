@@ -111,6 +111,7 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 #define RTS_MENU_MAX_SIZE           0x8000
 #define RTS_STASH_PATH              "/_pico/rtsstash.bin"
 #define RTS_MENU_PATH               "/_pico/rtsmenu9.bin"
+#define RTS_STATUS_PATH             "/_pico/rtsstatus.txt"
 #define RTS_MENU_STATE_RESUME       0x4D534552 // 'RESM'
 #define RTS_MENU_STATE_EXIT         0x54495845 // 'EXIT'
 #define RTS_MENU_STATE_LEFT         0x5446454C // 'LEFT'
@@ -121,7 +122,7 @@ struct rts_info_t
 {
     u32 magic;          // RTS_INFO_MAGIC when the rest is valid
     u32 base;           // RTS_BASE; the arm9 wait piece jumps here (block + 0x114)
-    u32 stashSector;
+    u32 stashSector;     // the stash file holds RTS_STASH_SIZE, then the menu
     u32 stashSectorCount;
     u32 menuSector;
     u32 menuSectorCount;
