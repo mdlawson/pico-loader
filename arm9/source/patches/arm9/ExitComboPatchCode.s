@@ -31,7 +31,7 @@ patch_exitcombo_hook_entry:
     ldr r2, [r1, #0x0C] // exit_request_block_t::comboMagic
     ldr r3, hookComboMagic
     cmp r2, r3
-    ldrne r3, patch_exitcombo_hook_freeze_magic
+    ldrne r3, hookFreezeMagic
     cmpne r2, r3
     ldreq r12, patch_exitcombo_hook_check_address
     blxeq r12
@@ -44,11 +44,8 @@ patch_exitcombo_hook_entry:
 
 hookComboMagic:
     .word 0x424D4F43 // EXIT_REQUEST_COMBO_MAGIC
-// EXIT_REQUEST_FREEZE_COMBO_MAGIC when the hold piece is in, otherwise a value the
-// arm7 never publishes
-.global patch_exitcombo_hook_freeze_magic
-patch_exitcombo_hook_freeze_magic:
-    .word 0xFFFFFFFF
+hookFreezeMagic:
+    .word 0x435A5246 // EXIT_REQUEST_FREEZE_COMBO_MAGIC
 .global patch_exitcombo_hook_block_address
 patch_exitcombo_hook_block_address:
     .word 0
@@ -83,8 +80,11 @@ patch_exitcombo_check_entry:
     mov r3, #0x04000000
     str r2, [r3, #0x208] // IME = 0. Per cpu, so the arm7 keeps taking its vblank.
     // The reboot code hands over to the arm7 through this sync, so clear what
-    // the game left in it before the arm7 can see the request.
-    strb r2, [r3, #0x181] // REG_IPC_SYNC data out
+    // the game left in it before the arm7 can see the request. Only for an
+    // exit: a freeze gives the game back its sync. Bit 0 of the request magic
+    // is set in EXIT and clear in FREZ.
+    tst r12, #1
+    strbne r2, [r3, #0x181] // REG_IPC_SYNC data out
 
     str r12, [r1] // exit_request_block_t::requestMagic
     mcr p15, 0, r1, c7, c10, 1 // clean dcache entry by MVA
@@ -113,10 +113,8 @@ patch_exitcombo_wait_entry:
     bne 2b
     mcr p15, 0, r1, c7, c6, 1 // invalidate the line
     ldr r12, [r1, #0x0C] // exit_request_block_t::comboMagic
-    subs r12, r12, r0 // 0 = parked, 1 = cancelled, 2 = holding
+    subs r12, r12, r0 // 0 = parked, 1 = cancelled (also the end of a freeze)
     ldreq pc, patch_exitcombo_wait_teardown_address
-    cmp r12, #2
-    ldreq pc, patch_exitcombo_wait_hold_address
     cmp r12, #1
     bne 1b
 
@@ -135,9 +133,6 @@ waitParkMagic:
 .global patch_exitcombo_wait_teardown_address
 patch_exitcombo_wait_teardown_address:
     .word 0
-.global patch_exitcombo_wait_hold_address
-patch_exitcombo_wait_hold_address:
-    .word 0 // only reached when the hold piece is in
 
 // ---------------------------------------------------------------- teardown
 // r1 = block, r2 = 0, r3 = 0x04000000. Never returns.
@@ -175,86 +170,6 @@ patch_exitcombo_teardown_resetpool_address:
     .word 0
 .global patch_exitcombo_teardown_bootloaderbinaries_address
 patch_exitcombo_teardown_bootloaderbinaries_address:
-    .word 0
-
-// ---------------------------------------------------------------- hold
-// RTS step 1 test: freeze the game for about a second and carry on.
-// r1 = block, r2 = 0, r3 = 0x04000000, lr = back into the hook. IME is 0 and the
-// arm7 is holding in arm7 wram until requestMagic becomes RESM.
-// Both screens go white (display mode 0) while frozen, so the freeze is visible.
-.section "patch_exitcombo_hold", "ax"
-.global patch_exitcombo_hold_entry
-.type patch_exitcombo_hold_entry, %function
-patch_exitcombo_hold_entry:
-    ldr r0, [r3, #0x214] // REG_IF
-    str r0, holdSavedIf
-    ldr r0, [r3] // DISPCNT A
-    str r0, holdSavedDispA
-    bic r0, r0, #0x30000 // display mode 0, white
-    str r0, [r3]
-    add r12, r3, #0x1000
-    ldr r0, [r12] // DISPCNT B
-    str r0, holdSavedDispB
-    bic r0, r0, #0x30000
-    str r0, [r12]
-
-    // about a second: count 60 starts of vblank
-    mov r12, #60
-1:
-    ldrh r0, [r3, #6] // VCOUNT
-    cmp r0, #192
-    bne 1b
-2:
-    ldrh r0, [r3, #6]
-    cmp r0, #192
-    beq 2b
-    subs r12, r12, #1
-    bne 1b
-
-    // let the arm7 go, and wait until it is back in the game
-    ldr r0, holdResumeMagic
-    str r0, [r1] // exit_request_block_t::requestMagic
-    mcr p15, 0, r1, c7, c10, 1 // clean dcache entry by MVA
-    mcr p15, 0, r2, c7, c10, 4 // drain write buffer
-3:
-    mov r12, #0x400
-4:
-    subs r12, r12, #1
-    bne 4b
-    mcr p15, 0, r1, c7, c6, 1 // invalidate the line
-    ldr r12, [r1, #0x0C] // exit_request_block_t::comboMagic, 0 once the arm7 is back
-    cmp r12, #0
-    bne 3b
-    str r2, [r1] // exit_request_block_t::requestMagic = 0
-    mcr p15, 0, r1, c7, c10, 1
-    mcr p15, 0, r2, c7, c10, 4
-
-    ldr r0, holdSavedDispA
-    str r0, [r3]
-    ldr r0, holdSavedDispB
-    add r12, r3, #0x1000
-    str r0, [r12]
-
-    // Drop the vblank, hblank and vcount irqs that came in while frozen, so the
-    // game does not see a burst of them. Anything else stays pending.
-    ldr r0, [r3, #0x214]
-    ldr r12, holdSavedIf
-    bic r0, r0, r12
-    and r0, r0, #7
-    str r0, [r3, #0x214]
-
-    mov r0, #1
-    str r0, [r3, #0x208] // IME = 1
-    mov r0, #0 // irq index 0 = vblank, for the hook's dispatch
-    bx lr
-
-holdResumeMagic:
-    .word 0x4D534552 // EXIT_REQUEST_RESUME_MAGIC
-holdSavedIf:
-    .word 0
-holdSavedDispA:
-    .word 0
-holdSavedDispB:
     .word 0
 
 .end

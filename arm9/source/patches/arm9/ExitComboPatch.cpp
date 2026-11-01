@@ -165,21 +165,8 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     _dispatchTail[0] = 0xE51FF004; // ldr pc,= address
     _dispatchTail[1] = _hookEntry;
     _installed = 1;
-    _waitHoldLiteral = wait->GetHoldAddressLiteral();
-    _hookFreezeMagicLiteral = hook->GetFreezeMagicLiteral();
 
     LOG_DEBUG("Exit combo enabled\n");
-}
-
-void ExitComboPatch::EnableFreeze(u32 holdAddress)
-{
-    if (!_installed)
-        return;
-
-    // The pieces are in the game already, so their literals change in place.
-    *_waitHoldLiteral = holdAddress;
-    *_hookFreezeMagicLiteral = EXIT_REQUEST_FREEZE_COMBO_MAGIC;
-    LOG_DEBUG("Freeze test combo enabled, hold at 0x%X\n", holdAddress);
 }
 
 void ExitComboPatch::Deactivate()

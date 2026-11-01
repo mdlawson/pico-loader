@@ -1,7 +1,6 @@
 #pragma once
 
 class LoaderPlatform;
-class ExitComboPatch;
 
 /// @brief Class for patching the arm7 of retail roms.
 class Arm7Patcher
@@ -12,14 +11,14 @@ public:
     /// @param cheatsLength The length of the cheats data, or zero when there are no cheats.
     /// @param cheatsPtr Pointer to where the cheats need to be stored, or \c nullptr when there are no cheats.
     /// @param bannerSavePathPtr Pointer to where the banner save path needs to be stored, or \c nullptr when there is no banner save.
-    /// @param exitComboArm9Patch The arm9 half of the in-game exit when it was
-    ///        installed, which the arm7 half depends on, or \c nullptr.
+    /// @param exitComboArm9Installed \c true when the arm9 half of the in-game exit
+    ///        was installed, which the arm7 half depends on.
     /// @param exitComboArm7Installed Set to \c true when the arm7 half of the in-game
     ///        exit was installed, or \c false otherwise.
     /// @param runInDSiMode \c true if the rom should be loaded in DSi mode, or \c false otherwise.
     /// @param keepDsiBios \c true if the rom keeps the dsi bios on a DSi or 3DS, or \c false otherwise.
     /// @return A pointer to the patch space in IWRAM, or \c nullptr if the patches have been placed in main memory.
     void* ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
-        char*& bannerSavePathPtr, ExitComboPatch* exitComboArm9Patch, bool& exitComboArm7Installed,
+        char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed,
         bool runInDSiMode, bool keepDsiBios) const;
 };

@@ -138,9 +138,7 @@ noRequest:
     beq held
     tst r2, #0x40 // Up
     bne notHeld
-    ldr r3, patch_exitcombo_arm7_freeze_magic // 0 without the arm9 hold piece
-    cmp r3, #0
-    beq notHeld
+    ldr r3, freezeComboMagic
 held:
     // a different combo than last vblank starts the count again
     ldr r2, [r12, #20] // requestKind
@@ -230,8 +228,11 @@ parkWaitEnd:
 .error "parkWait is copied as nine words"
 .endif
 
-// RTS step 1 test: hold this cpu until the arm9 says RESM, then go on with
-// the game. r1 = block, r12 = holdCounter, r0 = 0, lr = which way in.
+// RTS step 1 test: hold the game for about a second, then let it go on.
+// r1 = block, r12 = holdCounter, r0 = 0, lr = which way in.
+// The arm9 is waiting in its wait piece with irqs off. It sees nothing but the
+// FRZC it reacted to until this side answers CANCEL, which sends it down the
+// path that gives the game back its irqs.
 hold:
     stmfd sp!, {r4-r11, lr}
     ldr r3, regIme
@@ -248,28 +249,26 @@ hold:
     ldr r2, [r3]
     str r2, [r12, #32] // holdSavedIf
 
-    // Wait from arm7 wram (see park), in the eight words under the game's
-    // stacks, which are kept here and put back after.
+    // Count the second out from arm7 wram (see park), in the nine words under
+    // the game's stacks, which are kept here and put back after. Polling only
+    // VCOUNT keeps this cpu off main memory altogether.
     ldr r0, parkWaitAddress
     add r2, r12, #36 // holdStash
-    ldmia r0, {r3-r10}
-    stmia r2, {r3-r10}
+    ldmia r0, {r3-r11}
+    stmia r2, {r3-r11}
     adr r2, holdWait
-    ldmia r2, {r3-r10}
-    stmia r0, {r3-r10}
-
-    ldr r2, parkMagic
-    add r2, r2, #2 // EXIT_REQUEST_HOLD_MAGIC
-    str r2, [r1, #0x0C] // exit_request_block_t::comboMagic
-    ldr r2, resumeMagic
+    ldmia r2, {r3-r11}
+    stmia r0, {r3-r11}
+    mov r2, #60 // frames
+    mov r3, #0x04000000
     mov lr, pc
     bx r0
 
     adr r12, holdCounter
     ldr r0, parkWaitAddress
     add r2, r12, #36 // holdStash
-    ldmia r2, {r3-r10}
-    stmia r0, {r3-r10}
+    ldmia r2, {r3-r11}
+    stmia r0, {r3-r11}
 
     ldr r3, regSoundCnt
     ldr r2, [r12, #28] // holdSavedSoundCnt
@@ -286,8 +285,9 @@ hold:
     str r2, [r12, #4] // requestFrames
     mvn r2, #0
     str r2, [r12] // holdCounter = -1, the combo has to be released first
-    mov r2, #0
-    str r2, [r1, #0x0C] // exit_request_block_t::comboMagic = 0, back in the game
+    ldr r2, parkMagic
+    add r2, r2, #1 // EXIT_REQUEST_CANCEL_MAGIC: the arm9 goes on
+    str r2, [r1, #0x0C] // exit_request_block_t::comboMagic
     ldr r3, regIme
     ldr r2, [r12, #24] // holdSavedIme
     str r2, [r3]
@@ -295,21 +295,22 @@ hold:
     mov r0, #0 // the vblank index
     b dispatch
 
-// Copied to arm7 wram, so nothing pc relative. r1 = block, r2 = RESM.
+// Copied to arm7 wram, so nothing pc relative. r2 = frames, r3 = 0x04000000.
 holdWait:
 1:
-    mov r3, #0x400
+    ldrh r0, [r3, #6] // VCOUNT
+    cmp r0, #192
+    bne 1b
 2:
-    subs r3, r3, #1
-    bne 2b
-    ldr r3, [r1] // exit_request_block_t::requestMagic
-    cmp r3, r2
+    ldrh r0, [r3, #6]
+    cmp r0, #192
+    beq 2b
+    subs r2, r2, #1
     bne 1b
     bx lr
-    .word 0
 holdWaitEnd:
-.if holdWaitEnd - holdWait != 8 * 4
-.error "holdWait is copied as eight words"
+.if holdWaitEnd - holdWait != 9 * 4
+.error "holdWait is copied as nine words"
 .endif
 
 dispatch:
@@ -409,8 +410,8 @@ requestMagic:
 freezeRequestMagic:
     .word 0x555E4540 // EXIT_REQUEST_FREEZE_REQUEST_MAGIC
 
-resumeMagic:
-    .word 0x4D534552 // EXIT_REQUEST_RESUME_MAGIC
+freezeComboMagic:
+    .word 0x435A5246 // EXIT_REQUEST_FREEZE_COMBO_MAGIC
 
 pathMagic:
     .word 0x58454C50 // EXIT_REQUEST_PATH_MAGIC
@@ -448,13 +449,8 @@ holdSavedSoundCnt: // + 28
 holdSavedIf: // + 32
     .word 0
 
-holdStash: // + 36, eight words
-    .space 32
-
-// EXIT_REQUEST_FREEZE_COMBO_MAGIC when the arm9 hold piece is in, 0 otherwise
-.global patch_exitcombo_arm7_freeze_magic
-patch_exitcombo_arm7_freeze_magic:
-    .word 0
+holdStash: // + 36, nine words
+    .space 36
 
 .global patch_exitcombo_arm7_block_address
 patch_exitcombo_arm7_block_address:

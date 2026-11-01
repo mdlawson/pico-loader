@@ -82,13 +82,14 @@ static_assert(sizeof(shared_memory_ntr_t) == 0x800);
 #define EXIT_REQUEST_CANCEL_MAGIC   (EXIT_REQUEST_PARK_MAGIC + 1)
 // RTS step 1 test (freeze for a second and resume). The arm9 check piece makes the
 // request from the published combo magic: request = combo ^ EXIT_REQUEST_REQUEST_KEY.
+// The arm7 answers a freeze request by holding for a second, then with CANCEL.
 #define EXIT_REQUEST_REQUEST_KEY            (EXIT_REQUEST_COMBO_MAGIC ^ EXIT_REQUEST_REQUEST_MAGIC)
 #define EXIT_REQUEST_FREEZE_COMBO_MAGIC     0x435A5246 // 'FRZC'
 #define EXIT_REQUEST_FREEZE_REQUEST_MAGIC   (EXIT_REQUEST_FREEZE_COMBO_MAGIC ^ EXIT_REQUEST_REQUEST_KEY)
-#define EXIT_REQUEST_HOLD_MAGIC             (EXIT_REQUEST_PARK_MAGIC + 2)
-#define EXIT_REQUEST_RESUME_MAGIC           0x4D534552 // 'RESM'
 static_assert(EXIT_REQUEST_REQUEST_KEY == 0x16041706);
 static_assert(EXIT_REQUEST_FREEZE_REQUEST_MAGIC == 0x555E4540);
+// ExitComboPatchCode.s clears the arm9 ipc sync only for an exit, which it tells by bit 0
+static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_MAGIC & 1));
 #define EXIT_REQUEST_CHECKSUM_XOR   0x5A5A5A5A
 
 /// @brief Block used to request an in-game exit to the launcher.

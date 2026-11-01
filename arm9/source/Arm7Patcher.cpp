@@ -18,9 +18,6 @@
 #include "patches/arm7/PokemonDownloaderArm7Patch.h"
 #include "patches/arm7/cheats/CheatEnginePatch.h"
 #include "patches/arm7/ExitComboArm7Patch.h"
-#include "patches/arm7/ExitComboArm7PatchCode.h"
-#include "patches/arm9/ExitComboPatch.h"
-#include "patches/arm9/ExitComboPatchCode.h"
 #include "patches/arm7/DsiBiosPitchTablePatch.h"
 #include "patches/DsiBiosLz77SwiPatch.h"
 #include "Arm7Patcher.h"
@@ -40,7 +37,7 @@ static u32 correctAddress(u32 address, bool runInDSiMode)
 }
 
 void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
-    char*& bannerSavePathPtr, ExitComboPatch* exitComboArm9Patch, bool& exitComboArm7Installed, bool runInDSiMode,
+    char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed, bool runInDSiMode,
     bool keepDsiBios) const
 {
     cheatsPtr = nullptr;
@@ -122,7 +119,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         // and the arm7 dispatcher was found. It only takes patch heap, so the
         // save buffer and banner path below stay where they are without it.
         ExitComboArm7Patch* exitComboArm7Patch = nullptr;
-        if (exitComboArm9Patch != nullptr)
+        if (exitComboArm9Installed)
         {
             exitComboArm7Patch = new ExitComboArm7Patch();
             exitComboArm7Patch->FindPatchTarget(patchContext);
@@ -130,23 +127,6 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             {
                 exitComboArm7Patch = nullptr;
             }
-        }
-
-        // RTS step 1 freeze test: the arm9 hold piece is too big for the gaps the
-        // arm9 pieces of the exit use, so it goes in the arm7 main memory arena,
-        // like the cheats. The arm9 of the game runs it from the 0x023 mirror,
-        // which its main memory protection region covers.
-        u32 freezeHoldLoaderAddress = 0;
-        u32 freezeHoldGameAddress = 0;
-        patch_exitcombo_arm7_freeze_magic = 0;
-        if (exitComboArm7Patch != nullptr)
-        {
-            mainMemoryArenaLo = (mainMemoryArenaLo + 31) & ~31;
-            freezeHoldLoaderAddress = correctAddress(mainMemoryArenaLo, romHeader);
-            freezeHoldGameAddress = 0x02000000 | (mainMemoryArenaLo & 0x003FFFFF);
-            mainMemoryArenaLo += (SECTION_SIZE(patch_exitcombo_hold) + 31) & ~31;
-            patch_exitcombo_arm7_freeze_magic = EXIT_REQUEST_FREEZE_COMBO_MAGIC;
-            LOG_DEBUG("Freeze test hold piece placed at 0x%X\n", freezeHoldGameAddress);
         }
 
         if (romHeader->unitCode == 0) // seems only present on NITRO, not on HYBRID or LIMITED
@@ -244,14 +224,6 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
 
         // the arm7 half may not have fit after all
         exitComboArm7Installed = exitComboArm7Patch != nullptr && exitComboArm7Patch->IsInstalled();
-
-        if (exitComboArm7Installed)
-        {
-            memcpy((void*)freezeHoldLoaderAddress, SECTION_START(patch_exitcombo_hold), SECTION_SIZE(patch_exitcombo_hold));
-            exitComboArm9Patch->EnableFreeze(freezeHoldGameAddress);
-            dc_flushAll();
-            dc_drainWriteBuffer();
-        }
 
         // If in DSi mode and the rom is a DSi rom, restore twl wram.
         if (runInDSiMode)
