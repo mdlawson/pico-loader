@@ -372,11 +372,16 @@ static int restoreSectorAround(u32 offset, u32 keepStart, u32 keepEnd)
     return 1;
 }
 
-// The writable arm9 registers, from the dump (offsets from 0x04000000, size).
+// The writable arm9 registers, from the dump (offsets from 0x04000000, size),
+// in this order. The scroll, affine, window size, mosaic and fade registers
+// can't be read, so they stay as the running session left them.
 static const u16 sIoRestore[][2] =
 {
+    { 0x004, 2 },                                               // DISPSTAT: vcount line and irq enables
     { 0x008, 8 }, { 0x048, 4 }, { 0x050, 2 }, { 0x060, 4 },     // BGxCNT, WININ/OUT, BLDCNT, DISP3DCNT
     { 0x1008, 8 }, { 0x1048, 4 }, { 0x1050, 2 },                // the same of engine B
+    { 0x0E0, 16 },                                              // dma fill values
+    { 0x100, 16 },                                              // timers: the count as reload, then the control
     { 0x210, 4 },                                               // IE
 };
 
