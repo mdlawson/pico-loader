@@ -173,9 +173,10 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
     void* cheats = nullptr;
     char* bannerSavePath = nullptr;
     bool exitComboArm7Installed = false;
+    void* censusSpace = nullptr;
     void* patchSpace = Arm7Patcher().ApplyPatches(
         sLoaderPlatform, cheatsLength, cheats, bannerSavePath, sExitComboPatch != nullptr, exitComboArm7Installed,
-        sRunInDSiMode, sKeepDsiBios);
+        sRunInDSiMode, sKeepDsiBios, censusSpace);
     if (sSoftResetCheatsPointer != nullptr)
     {
         *sSoftResetCheatsPointer = cheats;
@@ -190,6 +191,14 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
         sExitComboPatch->Deactivate();
         dc_drainWriteBuffer();
     }
+    u32 census = 0;
+    if (sExitComboPatch != nullptr && exitComboArm7Installed && sExitComboPatch->InstallCensus(censusSpace))
+    {
+        census = (u32)censusSpace;
+        dc_flushAll();
+        dc_drainWriteBuffer();
+        ic_invalidateAll();
+    }
     // in arm7 wram the arm7 copies it into place; either way the rts needs to
     // know where it is, to leave it alone when it loads a state
     bool inWram = (u32)patchSpace >= 0x03000000;
@@ -198,6 +207,7 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
     ipc_sendWordDirect((u32)bannerSavePath);
     ipc_sendWordDirect(sKeepDsiBios ? 1 : 0);
     ipc_sendWordDirect((u32)patchSpace);
+    ipc_sendWordDirect(census);
 }
 
 static void handleSetAPInfoCommand()

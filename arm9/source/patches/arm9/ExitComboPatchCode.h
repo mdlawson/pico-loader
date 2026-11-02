@@ -17,6 +17,7 @@ extern u32 patch_exitcombo_hook_block_address;
 extern u32 patch_exitcombo_hook_check_address;
 extern u32 patch_exitcombo_hook_table_address;
 extern u32 patch_exitcombo_hook_return_address;
+extern u32 patch_exitcombo_hook_census_address;
 extern u32 patch_exitcombo_check_wait_address;
 extern u32 patch_exitcombo_wait_teardown_address;
 extern u32 patch_exitcombo_teardown_resetpool_address;
@@ -86,6 +87,14 @@ public:
         patch_exitcombo_hook_check_address = (u32)check->GetEntryFunction();
         patch_exitcombo_hook_table_address = irqTableAddress;
         patch_exitcombo_hook_return_address = irqReturnAddress;
+        patch_exitcombo_hook_census_address = 0;
+    }
+
+    /// @brief Where the hook's census literal landed, for the loader to fill
+    ///        once the census space is known.
+    u32* GetCensusLiteralAtTarget() const
+    {
+        return (u32*)GetAddressAtTarget((void*)&patch_exitcombo_hook_census_address);
     }
 
     const void* GetEntryFunction() const

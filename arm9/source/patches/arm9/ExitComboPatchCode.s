@@ -26,6 +26,11 @@
 patch_exitcombo_hook_entry:
     cmp r0, #0 // irq index 0 = vblank
     bne 1f
+    // the register-write census, when the loader put one in (it keeps r4-r11)
+    ldr r12, patch_exitcombo_hook_census_address
+    cmp r12, #0
+    blxne r12
+    mov r0, #0
     ldr r1, patch_exitcombo_hook_block_address
     mcr p15, 0, r1, c7, c6, 1 // invalidate the line, the arm7 has no cache
     ldr r2, [r1, #0x0C] // exit_request_block_t::comboMagic
@@ -57,6 +62,9 @@ patch_exitcombo_hook_table_address:
     .word 0
 .global patch_exitcombo_hook_return_address
 patch_exitcombo_hook_return_address:
+    .word 0
+.global patch_exitcombo_hook_census_address
+patch_exitcombo_hook_census_address:
     .word 0
 
 // ---------------------------------------------------------------- check

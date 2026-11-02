@@ -139,7 +139,14 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 #define RTS_STATE_DIRECTORY         "/_pico/states"
 #define RTS_STATE_SIZE              0x500000 // layout in rtsmenu/state.h
 #define RTS_LOG_PATH                "/_pico/rtslog.txt" // the restore test's report, text
-#define RTS_LOG_SIZE                0x4000
+#define RTS_LOG_SIZE                0x5000 // five 4 KB sections, the fifth the census
+
+// The arm9 register-write census (arm9/source/patches/arm9/CensusPatchCode.s):
+// variables and code, then the arrays from CENSUS_ARRAYS. Arm7Patcher takes it
+// from the arm7's main memory arena, below the arm9's no-access region.
+#define CENSUS_SPACE_SIZE           0x1C00
+#define CENSUS_ARRAYS               0x1000
+#define CENSUS_MAGIC                0x31534E43 // 'CNS1'
 
 /// @brief Where the arm7 finds the stash file and the menu on the sd card.
 ///        Both are single contiguous runs of sectors, checked by the loader at boot.
@@ -164,9 +171,11 @@ struct rts_info_t
     u32 testSlotSector[2]; // slots 2 and 3, the test's snapshots; 0 when missing
     u32 logSector;      // RTS_LOG_PATH, 0 when missing
     u32 logSectorCount;
+    u32 testResult;     // the menu's own: the load check's counts
+    u32 censusStart;    // the census space, 0 when there is none
 };
 
-static_assert(sizeof(rts_info_t) == 0x50);
+static_assert(sizeof(rts_info_t) == 0x58);
 // the arm7 stub stores the menu's exit answer as the exit request as it is
 static_assert(RTS_MENU_STATE_EXIT == EXIT_REQUEST_REQUEST_MAGIC);
 
@@ -198,7 +207,7 @@ struct exit_request_block_t
     rts_info_t rts;
 };
 
-static_assert(sizeof(exit_request_block_t) == 0x160);
+static_assert(sizeof(exit_request_block_t) == 0x168);
 static_assert(offsetof(exit_request_block_t, rts.testFrames) == 0x148);
 static_assert(offsetof(exit_request_block_t, rts.cmdSector) == 0x134);
 static_assert(offsetof(exit_request_block_t, rts.cmdSectorCount) == 0x13C);

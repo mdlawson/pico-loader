@@ -652,6 +652,7 @@ void NdsLoader::ApplyArm7Patches()
     u32 arm7PatchSpace = receiveFromArm9(); // wherever it is
     TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchStart = arm7PatchSpace;
     TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchSize = arm7PatchSpace ? ARM7_PATCH_SPACE_SIZE : 0;
+    TWL_SHARED_MEMORY->exitRequest.rts.censusStart = receiveFromArm9(); // 0 without one
     if (cheatsPtr != nullptr && _cheats != nullptr)
     {
         memcpy(cheatsPtr, _cheats, _cheats->length);
@@ -971,7 +972,7 @@ static u32 makeContiguousFile(const char* path, u32 size, u8 fill)
         {
             sector = 0;
         }
-        for (u32 offset = 0; sector && offset < (size <= 0x4000 ? size : 512); offset += 512)
+        for (u32 offset = 0; sector && offset < (size <= RTS_LOG_SIZE ? size : 512); offset += 512)
         {
             UINT bytesWritten = 0;
             if (f_write(file.get(), first, 512, &bytesWritten) != FR_OK || bytesWritten != 512)

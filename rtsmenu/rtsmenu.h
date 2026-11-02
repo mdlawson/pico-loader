@@ -6,6 +6,7 @@
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
+typedef uint64_t u64;
 typedef volatile u8 vu8;
 typedef volatile u16 vu16;
 typedef volatile u32 vu32;
@@ -14,6 +15,7 @@ typedef volatile u32 vu32;
 #define RTS_BASE                0x02100000
 #define RTS_STASH_SIZE          0x30000
 #define RTS_STATE_SIZE          0x500000
+#define CENSUS_SPACE_SIZE       0x1C00
 #define RTS_MENU_STATE_RESUME   0x4D534552 // 'RESM'
 #define RTS_MENU_STATE_EXIT     0x54495845 // 'EXIT'
 #define RTS_MENU_STATE_SDREAD   0x44524453 // 'SDRD'
@@ -48,6 +50,7 @@ typedef struct
     u32 logSector;
     u32 logSectorCount;
     u32 testResult;     // the load check's counts: memory parts | registers << 16
+    u32 censusStart;    // the census space, 0 when there is none
 } rts_info_t;
 
 #define TEST_REFERENCE  1 // the freeze writes slot 2
@@ -123,3 +126,6 @@ static inline void dcInvalidateLine(const volatile void* p)
 {
     asm volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(p) : "memory");
 }
+
+// The census report into the log's fifth section (check.c); 0 when not written.
+int censusWriteLog(void* block, char* line1, char* line2);

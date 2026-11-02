@@ -12,6 +12,7 @@
 #include "rtsmenu.h"
 #include "state.h"
 #include "stateint.h"
+#include "census.h"
 
 int gCheckOnLeave;
 
@@ -77,17 +78,19 @@ static void logGame(void* block)
 
 #define PREVIOUS "(previous) "
 
-// The log file: four 4 KB sections, padded with spaces. 0 the latest load
-// check, 1 the latest run comparison, 2 and 3 the ones before them. Writing
-// section 0 or 1 moves what it held to 2 or 3 first. Uses __scratch.
+// The log file: five 4 KB sections, padded with spaces. 0 the latest load
+// check, 1 the latest run comparison, 2 and 3 the ones before them, 4 the
+// register-write census. Writing section 0 or 1 moves what it held to 2 or 3
+// first. Uses __scratch.
 static int logWrite(int section)
 {
-    if (!sRts->logSector || sRts->logSectorCount * 512 < 4 * LOG_SIZE)
+    if (!sRts->logSector || sRts->logSectorCount * 512 < (u32)(section + 1) * LOG_SIZE)
         return 0;
     u8* old = (u8*)__scratch;
     u8* moved = (u8*)__scratch + LOG_SIZE;
     u32 sector = sRts->logSector + section * (LOG_SIZE / 512);
-    if (command(RTS_MENU_STATE_SDREAD, sector, (u32)old, LOG_SIZE / 512) == RTS_MENU_STATE_DONE &&
+    if (section < 2 && sRts->logSectorCount * 512 >= 4 * LOG_SIZE &&
+        command(RTS_MENU_STATE_SDREAD, sector, (u32)old, LOG_SIZE / 512) == RTS_MENU_STATE_DONE &&
         old[0] == 'R' && old[1] == 'T' && old[2] == 'S')
     {
         u32 n = sizeof(PREVIOUS) - 1;
@@ -130,7 +133,7 @@ typedef struct
 } skip_t;
 
 #define MAX_PARTS 24
-#define MAX_SKIPS 4
+#define MAX_SKIPS 6
 static part_t sParts[MAX_PARTS];
 static int sPartCount;
 static skip_t sSkips[MAX_SKIPS];
@@ -391,7 +394,7 @@ u32 checkLoadedMemory(void* block, void (*progress)(u32 done, u32 total))
     addPart("main ram", STATE_MAIN_RAM, 0x400000, 0x02000000, SRC_ARM9, 0);
     addPart("main (stash)", STATE_MAIN_RAM + (RTS_BASE - 0x02000000), RTS_STASH_SIZE, RTS_BASE, SRC_STASH, 0);
 
-    u32 keep[3][2];
+    u32 keep[KEEP_RANGES][2];
     mainRamKeep(block, keep);
     u32 sp = arm7Sp(1);
 
@@ -410,12 +413,12 @@ u32 checkLoadedMemory(void* block, void (*progress)(u32 done, u32 total))
         if (p->address == 0x03800000)
             addArm7WramSkips(sp);
         if (p->address == 0x02000000)
-            for (int k = 0; k < 3; k++)
+            for (int k = 0; k < KEEP_RANGES; k++)
                 addSkip(0x02000000 + keep[k][0], 0x02000000 + keep[k][1]);
         differ += comparePart(1, p);
     }
     closePermissions(permissions);
-    logStr("Left out: the menu's backdrop, the loader's block and arm7 patch space, the arm7 stub's frames.");
+    logStr("Left out: the menu's backdrop, the loader's block, arm7 patch space and census, the arm7 stub's frames.");
     logEnd();
     logStr("memory parts that differ: ");
     logDec(differ);
@@ -657,7 +660,7 @@ u32 compareTestSlots(void* block, void (*progress)(u32 done, u32 total))
     }
     addPart("main ram", STATE_MAIN_RAM, 0x400000, 0x02000000, SRC_SLOT3, 0);
 
-    u32 keep[3][2];
+    u32 keep[KEEP_RANGES][2];
     mainRamKeep(block, keep);
     u32 sp = arm7Sp(2);
     sProgress = progress;
@@ -670,11 +673,11 @@ u32 compareTestSlots(void* block, void (*progress)(u32 done, u32 total))
         if (p->address == 0x03800000)
             addArm7WramSkips(sp);
         if (p->address == 0x02000000)
-            for (int k = 1; k < 3; k++) // the stash window is game memory in the files
+            for (int k = 1; k < KEEP_RANGES; k++) // the stash window is game memory in the files
                 addSkip(0x02000000 + keep[k][0], 0x02000000 + keep[k][1]);
         differ += comparePart(2, p);
     }
-    logStr("Left out: the loader's block and arm7 patch space, the arm7 stub's frames, and");
+    logStr("Left out: the loader's block, arm7 patch space and census, the arm7 stub's frames, and");
     logEnd();
     logStr("what only measures the pause (VCOUNT, display status flags, timer counts, keys,");
     logEnd();
@@ -685,4 +688,19 @@ u32 compareTestSlots(void* block, void (*progress)(u32 done, u32 total))
     logEnd();
     logWrite(1);
     return differ;
+}
+
+// The census report into the log's fifth section; the counts restart. Returns
+// 0 when the log could not be written.
+int censusWriteLog(void* block, char* line1, char* line2)
+{
+    sLogLen = 0;
+    logStr("RTS register-write census");
+    logEnd();
+    logGame(block);
+    logEnd();
+    sLogLen += censusReport(sLog + sLogLen, LOG_SIZE - sLogLen, line1, line2);
+    int ok = logWrite(4);
+    censusRestart();
+    return ok;
 }

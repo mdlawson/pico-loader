@@ -38,7 +38,7 @@ static u32 correctAddress(u32 address, bool runInDSiMode)
 
 void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
     char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed, bool runInDSiMode,
-    bool keepDsiBios) const
+    bool keepDsiBios, void*& censusSpace) const
 {
     cheatsPtr = nullptr;
     exitComboArm7Installed = false;
@@ -191,6 +191,25 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         if (exitComboArm7Patch != nullptr)
         {
             patchCollection.AddPatch(exitComboArm7Patch);
+        }
+
+        // The register-write census, for the exit combo's hook to run on the arm9:
+        // the arm9 must reach it with its protection unit on, so it has to end
+        // below the sdk's no-access region for the arm7 (0x023E0000).
+        censusSpace = nullptr;
+        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
+        {
+            u32 start = (mainMemoryArenaLo + 31) & ~31u;
+            if (start >= 0x02000000 && start + CENSUS_SPACE_SIZE <= 0x023E0000)
+            {
+                censusSpace = (void*)correctAddress(start, romHeader);
+                mainMemoryArenaLo = start + CENSUS_SPACE_SIZE;
+                LOG_DEBUG("Census space at 0x%p\n", censusSpace);
+            }
+            else
+            {
+                LOG_DEBUG("No census space: arm7 main memory arena at 0x%x\n", mainMemoryArenaLo);
+            }
         }
 
         arm7ArenaPatch->SetMainMemoryArenaLo((void*)mainMemoryArenaLo);

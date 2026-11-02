@@ -23,6 +23,11 @@ public:
     ///        exit could never fire. Must run before the game boots.
     void Deactivate();
 
+    /// @brief Puts the register-write census into space (CENSUS_SPACE_SIZE, in
+    ///        main memory the arm9 can reach) and has the hook call it on every
+    ///        vblank. Only with the hook in, and not for twl sdk games.
+    bool InstallCensus(void* space);
+
 private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.
     OSResetSystemPatch* _osResetSystemPatch;
@@ -34,4 +39,7 @@ private:
     u32 _savedRegionSize[7];
     u32 _savedRegionCount = 0;
     u32 _installed = 0;
+    u32* _censusLiteral = nullptr;
+    u32 _blockAddress = 0;
+    u32 _twlSdk = 0;
 };

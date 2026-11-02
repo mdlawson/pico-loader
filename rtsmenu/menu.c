@@ -4,6 +4,7 @@
 // contents of the bank and every register it changes.
 
 #include "rtsmenu.h"
+#include "census.h"
 
 #define REG_DISPCNT_A       (*(vu32*)0x04000000)
 #define REG_DISPCNT_B       (*(vu32*)0x04001000)
@@ -18,6 +19,7 @@
 
 #define KEY_A       (1 << 0)
 #define KEY_B       (1 << 1)
+#define KEY_START   (1 << 3)
 #define KEY_UP      (1 << 6)
 #define KEY_DOWN    (1 << 7)
 
@@ -160,7 +162,7 @@ static void drawText(int x, int y, const char* text, u16 ink, u16 paper)
 #define COLOR_BAD       RGB(30, 12, 10)
 #define COLOR_BAR       RGB(10, 18, 30)
 
-enum { ITEM_RESUME, ITEM_SAVE, ITEM_LOAD, ITEM_TEST_SAVE, ITEM_TEST_LOAD, ITEM_EXIT };
+enum { ITEM_RESUME, ITEM_SAVE, ITEM_LOAD, ITEM_TEST_SAVE, ITEM_TEST_LOAD, ITEM_CENSUS, ITEM_EXIT };
 
 static const char* const sLabels[] =
 {
@@ -169,14 +171,16 @@ static const char* const sLabels[] =
     [ITEM_LOAD] = "Load state (slot 1)",
     [ITEM_TEST_SAVE] = "Test: save + reference",
     [ITEM_TEST_LOAD] = "Test: load + compare",
+    [ITEM_CENSUS] = "Census: traps on",
     [ITEM_EXIT] = "Exit to launcher",
 };
 
-static int sItems[6];
+#define MAX_ITEMS   7
+static int sItems[MAX_ITEMS];
 static int sItemCount;
 
-#define ITEMS_Y     44
-#define ITEM_STEP   17
+#define ITEMS_Y     43
+#define ITEM_STEP   15
 #define STATUS_Y    148
 
 static void drawGameLine(const u8* header)
@@ -202,8 +206,18 @@ static void drawItems(int selected)
         u16 paper = i == selected ? COLOR_SELECT_BG : COLOR_BG;
         u16 ink = i == selected ? COLOR_SELECT : COLOR_TEXT;
         fillRect(8, y - 1, SCREEN_W - 16, ITEM_STEP, paper);
-        drawText(16, y, sLabels[sItems[i]], ink, paper);
+        const char* label = sLabels[sItems[i]];
+        if (sItems[i] == ITEM_CENSUS)
+            label = !censusPresent() ? "Census: not in this boot" : censusWanted() ? "Census: traps on" : "Census: traps off";
+        drawText(16, y, label, ink, paper);
     }
+}
+
+static void drawHelp(int selected)
+{
+    fillRect(0, SCREEN_H - 16, SCREEN_W, 16, COLOR_BG);
+    drawText(8, SCREEN_H - 16, sItems[selected] == ITEM_CENSUS ? "A: report  Start: on/off" : "A: choose  B: back to the game",
+        COLOR_DIM, COLOR_BG);
 }
 
 static void drawStatus(const char* text, u16 ink)
@@ -379,6 +393,7 @@ u32 rtsMain(void* block)
 {
     volatile rts_info_t* rts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
     stateEnter(block);
+    censusPause(); // the menu's own io writes are not the game's
     stateTakeIo();
     takeScreens();
     fillRect(0, 0, SCREEN_W, SCREEN_H, COLOR_BG);
@@ -398,6 +413,8 @@ u32 rtsMain(void* block)
             sItems[sItemCount++] = ITEM_TEST_SAVE;
             sItems[sItemCount++] = ITEM_TEST_LOAD;
         }
+        if (rts->logSector)
+            sItems[sItemCount++] = ITEM_CENSUS;
     }
     sItems[sItemCount++] = ITEM_EXIT;
     if (rts->stateSector == 0)
@@ -428,7 +445,13 @@ u32 rtsMain(void* block)
         u16 keys = keysDown();
         if (!keys)
             continue;
-        if (keys & KEY_UP)
+        if ((keys & KEY_START) && sItems[selected] == ITEM_CENSUS && censusPresent())
+        {
+            censusToggle();
+            drawStatus(censusWanted() ? "Traps on from the next frame" : "Traps off from the next frame", COLOR_TEXT);
+            drawStatus2(0, 0);
+        }
+        else if (keys & KEY_UP)
             selected = selected == 0 ? sItemCount - 1 : selected - 1;
         else if (keys & KEY_DOWN)
             selected = selected == sItemCount - 1 ? 0 : selected + 1;
@@ -439,6 +462,18 @@ u32 rtsMain(void* block)
                 case ITEM_RESUME: answer = RTS_MENU_STATE_RESUME; break;
                 case ITEM_EXIT: answer = RTS_MENU_STATE_EXIT; break;
                 case ITEM_SAVE: waitRelease(); saveState(block); break;
+                case ITEM_CENSUS:
+                {
+                    waitRelease();
+                    drawStatus("Writing the census...", COLOR_TEXT);
+                    char l1[33], l2[33];
+                    if (!censusWriteLog(block, l1, l2))
+                        drawStatus("Census: log not written", COLOR_BAD);
+                    else
+                        drawStatus(l1[0] ? l1 : "Census written to rtslog.txt", COLOR_GOOD);
+                    drawStatus2(l2[0] ? l2 : 0, COLOR_TEXT);
+                    break;
+                }
                 case ITEM_TEST_SAVE:
                     waitRelease();
                     if (saveState(block))
@@ -469,7 +504,7 @@ u32 rtsMain(void* block)
                         sItemCount = 0;
                         sItems[sItemCount++] = ITEM_EXIT;
                         selected = 0;
-                        fillRect(0, ITEMS_Y - 1, SCREEN_W, 6 * ITEM_STEP, COLOR_BG);
+                        fillRect(0, ITEMS_Y - 1, SCREEN_W, MAX_ITEMS * ITEM_STEP, COLOR_BG);
                     }
                     break;
                 }
@@ -479,11 +514,15 @@ u32 rtsMain(void* block)
             answer = RTS_MENU_STATE_RESUME;
         waitVBlank();
         drawItems(selected);
+        drawHelp(selected);
         waitRelease(); // one step per press, and the game should not see the key
     }
 
     giveScreensBack();
     if (answer == RTS_MENU_STATE_RESUME)
+    {
         stateLeave();
+        censusResume();
+    }
     return answer;
 }

@@ -6,6 +6,7 @@
 #include "OSResetSystemPatchCode.h"
 #include "ExitComboPatchCode.h"
 #include "ExitComboPatch.h"
+#include "CensusPatchCode.h"
 
 // ExitComboPatchCode.s reaches resetParam and the sdk card lock word from the exit
 // request block. Both live in the same shared page in either mirror, so the distances
@@ -14,6 +15,10 @@ static_assert(offsetof(shared_memory_twl_t, ntrSharedMem) + offsetof(shared_memo
     - offsetof(shared_memory_twl_t, exitRequest) == 0x5A0);
 static_assert(offsetof(shared_memory_twl_t, ntrSharedMem) + offsetof(shared_memory_ntr_t, slot1Lock)
     - offsetof(shared_memory_twl_t, exitRequest) == 0x960);
+// and the bios's debug vector, the census's way in
+static constexpr u32 sDebugVectorFromBlock = offsetof(shared_memory_twl_t, ntrSharedMem) +
+    offsetof(shared_memory_ntr_t, arm9ExceptionVector) - offsetof(shared_memory_twl_t, exitRequest);
+static_assert(sDebugVectorFromBlock == 0x71C);
 
 // Tail of the SDK IRQ dispatcher: ldr r1, [pc, #8]; ldr r0, [r1, r0, lsl #2];
 // ldr lr, [pc, #4]; bx r0. The irq table address and the irq return address
@@ -162,11 +167,41 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     _savedTail[0] = _dispatchTail[0];
     _savedTail[1] = _dispatchTail[1];
     _hookEntry = (u32)hook->GetEntryFunction();
+    _censusLiteral = hook->GetCensusLiteralAtTarget();
+    _blockAddress = blockAddress;
+    _twlSdk = patchContext.GetSdkVersion().IsTwlSdk() ? 1 : 0;
     _dispatchTail[0] = 0xE51FF004; // ldr pc,= address
     _dispatchTail[1] = _hookEntry;
     _installed = 1;
 
     LOG_DEBUG("Exit combo enabled\n");
+}
+
+bool ExitComboPatch::InstallCensus(void* space)
+{
+    if (!_installed || !_censusLiteral || _twlSdk || !space)
+        return false;
+    u32 size = SECTION_SIZE(patch_census);
+    if (size > CENSUS_ARRAYS)
+    {
+        LOG_WARNING("Census code too big\n");
+        return false;
+    }
+    u32* words = (u32*)space;
+    for (u32 i = 0; i < CENSUS_SPACE_SIZE / 4; i++)
+        words[i] = 0;
+    const u32* code = (const u32*)SECTION_START(patch_census);
+    for (u32 i = 0; i < size / 4; i++)
+        words[i] = code[i];
+    u32 vector = _blockAddress + sDebugVectorFromBlock;
+    words[CENSUS_V_WANT / 4] = 1;
+    words[CENSUS_V_VECADDR / 4] = vector;
+    words[CENSUS_V_BSTACK / 4] = vector - 0x10; // the bios's control, spsr, r12, lr
+    words[CENSUS_V_ARRAYS / 4] = (u32)space + CENSUS_ARRAYS;
+    words[CENSUS_V_MAGIC / 4] = CENSUS_MAGIC;
+    *_censusLiteral = (u32)space + ((u32)&patch_census_tick_entry - (u32)SECTION_START(patch_census));
+    LOG_DEBUG("Census at 0x%p\n", space);
+    return true;
 }
 
 void ExitComboPatch::Deactivate()
@@ -193,6 +228,7 @@ void ExitComboPatch::Deactivate()
     delete[] _savedGameWords;
     _savedGameWords = nullptr;
     _installed = 0;
+    _censusLiteral = nullptr;
 
     LOG_DEBUG("Exit combo taken back out\n");
 }

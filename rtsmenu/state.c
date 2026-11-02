@@ -443,13 +443,13 @@ static const u16 sIoRestore[][2] =
 #define MAIN_STEP_DO(x) do { if (progress) { if (!(x)) return 0; progress(++*done, total); } else ++*done; } while (0)
 // Main ram around the keep ranges (offsets from 0x02000000): with progress 0
 // it only counts the steps. Returns 0 when a read failed.
-static int restoreMainRam(u32 keep[3][2], void (*progress)(u32 done, u32 total), u32* done, u32 total)
+static int restoreMainRam(u32 keep[KEEP_RANGES][2], void (*progress)(u32 done, u32 total), u32* done, u32 total)
 {
     for (u32 ram = 0; ram < 0x400000; )
     {
         u32 step = MAIN_STEP - (ram % MAIN_STEP);
         int around = -1;
-        for (int k = 0; k < 3; k++)
+        for (int k = 0; k < KEEP_RANGES; k++)
         {
             u32 start = keep[k][0] & ~511, end = (keep[k][1] + 511) & ~511;
             if (start == end)
@@ -527,7 +527,7 @@ void stateLeave(void)
     }
 }
 
-void mainRamKeep(void* block, u32 keep[3][2])
+void mainRamKeep(void* block, u32 keep[KEEP_RANGES][2])
 {
     keep[0][0] = RTS_BASE - 0x02000000;
     keep[0][1] = RTS_BASE - 0x02000000 + RTS_STASH_SIZE;
@@ -538,6 +538,14 @@ void mainRamKeep(void* block, u32 keep[3][2])
     {
         keep[2][0] = sRts->arm7PatchStart & 0x3FFFFF;
         keep[2][1] = keep[2][0] + sRts->arm7PatchSize;
+    }
+    // the census counts on through a load, and its variables say what the
+    // protection unit holds now
+    keep[3][0] = keep[3][1] = 0;
+    if (sRts->censusStart >= 0x02000000 && sRts->censusStart < 0x03000000)
+    {
+        keep[3][0] = sRts->censusStart & 0x3FFFFF;
+        keep[3][1] = keep[3][0] + CENSUS_SPACE_SIZE;
     }
 }
 
@@ -552,7 +560,7 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     // Main ram, around: the stash window (through the stash file below), the
     // block (the live handshake) and the arm7 patch space if it is in main
     // memory (its sd routines are running).
-    u32 keep[3][2];
+    u32 keep[KEEP_RANGES][2];
     mainRamKeep(block, keep);
     u32 mainSteps = 0;
     restoreMainRam(keep, 0, &mainSteps, 0);
