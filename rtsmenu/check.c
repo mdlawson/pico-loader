@@ -75,20 +75,33 @@ static void logGame(void* block)
     logEnd();
 }
 
-// Section 0 (the load check) or 1 (the run comparison), 8 KB each, the text
-// padded with spaces.
+#define PREVIOUS "(previous) "
+
+// The log file: four 4 KB sections, padded with spaces. 0 the latest load
+// check, 1 the latest run comparison, 2 and 3 the ones before them. Writing
+// section 0 or 1 moves what it held to 2 or 3 first. Uses __scratch.
 static int logWrite(int section)
 {
-    if (!sRts->logSector || sRts->logSectorCount * 512 < 0x4000)
+    if (!sRts->logSector || sRts->logSectorCount * 512 < 4 * LOG_SIZE)
         return 0;
+    u8* old = (u8*)__scratch;
+    u8* moved = (u8*)__scratch + LOG_SIZE;
+    u32 sector = sRts->logSector + section * (LOG_SIZE / 512);
+    if (command(RTS_MENU_STATE_SDREAD, sector, (u32)old, LOG_SIZE / 512) == RTS_MENU_STATE_DONE &&
+        old[0] == 'R' && old[1] == 'T' && old[2] == 'S')
+    {
+        u32 n = sizeof(PREVIOUS) - 1;
+        memcpy(moved, PREVIOUS, n);
+        memcpy(moved + n, old, LOG_SIZE - n);
+        moved[LOG_SIZE - 2] = '\r';
+        moved[LOG_SIZE - 1] = '\n';
+        command(RTS_MENU_STATE_SDWRITE, sector + 2 * (LOG_SIZE / 512), (u32)moved, LOG_SIZE / 512);
+    }
     for (u32 i = sLogLen; i < LOG_SIZE; i++)
         sLog[i] = ' ';
     sLog[LOG_SIZE - 2] = '\r';
     sLog[LOG_SIZE - 1] = '\n';
-    u32 sector = sRts->logSector + section * 16;
-    int ok = command(RTS_MENU_STATE_SDWRITE, sector, (u32)sLog, 8) == RTS_MENU_STATE_DONE;
-    memset(sLog, ' ', LOG_SIZE - 2);
-    ok &= command(RTS_MENU_STATE_SDWRITE, sector + 8, (u32)sLog, 8) == RTS_MENU_STATE_DONE;
+    int ok = command(RTS_MENU_STATE_SDWRITE, sector, (u32)sLog, LOG_SIZE / 512) == RTS_MENU_STATE_DONE;
     sLogLen = 0;
     return ok;
 }
@@ -246,6 +259,26 @@ static int comparePart(int slotA, const part_t* p)
 }
 
 // Words of a slot 2 and slot 3 section side by side (registers, header).
+// Bits that only measure how long the game sat paused before the snapshot,
+// not what was restored: left out of the comparison.
+static u32 timeOnlyBits(u32 section, u32 o)
+{
+    if (section == STATE_ARM9_IO)
+    {
+        if (o == 0x004) return 0xFFFF0007;              // VCOUNT, the display status flags
+        if (o >= 0x100 && o < 0x110) return 0x0000FFFF; // timer counts
+        if (o == 0x130 || o == 0x134) return 0xFFFFFFFF; // keys
+        if (o == 0x214) return 0xFFFFFFFF;              // IF
+        if (o >= 0x600 && o < 0x6A4) return 0xFFFFFFFF; // 3d status, ram counts, results
+    }
+    if (section == STATE_ARM7_IO)
+    {
+        if (o == ARM7_CTX_IF) return 0xFFFFFFFF;
+        if (o >= ARM7_CTX_TIMERS && o < ARM7_CTX_TIMERS + 16) return 0x0000FFFF;
+    }
+    return 0;
+}
+
 static int compareWords(const char* name, u32 offset, u32 size, u32 from)
 {
     if (!readSlot(2, offset, (u32)BUF_A, size) || !readSlot(3, offset, (u32)BUF_B, size))
@@ -259,7 +292,7 @@ static int compareWords(const char* name, u32 offset, u32 size, u32 from)
     for (u32 i = from; i < size; i += 4)
     {
         u32 a = *(u32*)(BUF_A + i), b = *(u32*)(BUF_B + i);
-        if (a == b)
+        if (!((a ^ b) & ~timeOnlyBits(offset, i)))
             continue;
         if (count++ < 24)
         {
@@ -530,9 +563,17 @@ u32 checkLoadedRegisters(void)
                 if (live[w] != *(u32*)(io + base + w * 4))
                     regMismatch(names[ch], *(u32*)(io + base + w * 4), live[w]);
         }
-        else if (live[2] & (1u << 31))
+        else
         {
-            regMismatch(names[ch], control, live[2]); // should be stopped
+            // stopped, with the rest as the game had it
+            for (int w = 0; w < 3; w++)
+            {
+                u32 saved = *(u32*)(io + base + w * 4);
+                if (w == 2)
+                    saved &= ~(1u << 31);
+                if (live[w] != saved)
+                    regMismatch(names[ch], saved, live[w]);
+            }
         }
     }
     // cp15: not set by a load, the same setup or the load would have refused
@@ -633,9 +674,11 @@ u32 compareTestSlots(void* block, void (*progress)(u32 done, u32 total))
                 addSkip(0x02000000 + keep[k][0], 0x02000000 + keep[k][1]);
         differ += comparePart(2, p);
     }
-    logStr("Left out: the loader's block and arm7 patch space, the arm7 stub's frames. Some");
+    logStr("Left out: the loader's block and arm7 patch space, the arm7 stub's frames, and");
     logEnd();
-    logStr("registers always differ (VCOUNT, timer counts, keys, IF, 3D status).");
+    logStr("what only measures the pause (VCOUNT, display status flags, timer counts, keys,");
+    logEnd();
+    logStr("IF, 3D status).");
     logEnd();
     logStr("parts that differ: ");
     logDec(differ);

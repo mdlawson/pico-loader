@@ -509,7 +509,13 @@ void stateLeave(void)
         // only the repeating ones the display starts; one-shot transfers ended
         // long ago in the saved session, and card or 3d fifo ones need their source
         if (!dmaRestored(control))
+        {
+            // the game's values, left as a finished transfer leaves them
+            dma[0] = sDma[ch][0];
+            dma[1] = sDma[ch][1];
+            dma[2] = control & ~(1u << 31);
             continue;
+        }
         dma[0] = sDma[ch][0];
         dma[1] = sDma[ch][1];
         dma[2] = control;

@@ -114,6 +114,19 @@ notOut:
     orrs r2, r2, r3
     bne dispatch
     str r2, [r12, #12] // savedSinceRequest
+    // The arm9 takes it on a vblank too. Published as both vblanks begin, it
+    // could make this one or the next; a few lines in, it is always the next,
+    // so the restore test pauses on the same frame each time.
+    ldr r3, regKeyInput
+    sub r3, r3, #0x128
+    sub r3, r3, #2 // VCOUNT, 0x04000006
+1:
+    ldrh r2, [r3]
+    cmp r2, #192
+    blo 2f // a late irq, past the vblank lines: no race
+    cmp r2, #200
+    blo 1b
+2:
     ldr r2, [r12, #20] // requestKind
     str r2, [r1, #0x0C] // exit_request_block_t::comboMagic
     b dispatch
