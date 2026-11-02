@@ -104,7 +104,6 @@ static void giveScreensBack(void)
     REG_DISPCNT_B = gGameScreen.dispcntB;
     REG_DISPCNT_A = gGameScreen.dispcntA;
     REG_DISPCAPCNT = gGameScreen.dispcapcnt;
-    stateLeave();
 }
 
 // ---------------------------------------------------------------- drawing
@@ -308,6 +307,7 @@ static int loadState(void* block, int* broken)
 u32 rtsMain(void* block)
 {
     volatile rts_info_t* rts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
+    stateEnter(block);
     stateTakeIo();
     takeScreens();
     fillRect(0, 0, SCREEN_W, SCREEN_H, COLOR_BG);
@@ -375,5 +375,7 @@ u32 rtsMain(void* block)
     }
 
     giveScreensBack();
+    if (answer == RTS_MENU_STATE_RESUME)
+        stateLeave();
     return answer;
 }

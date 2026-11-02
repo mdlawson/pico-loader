@@ -173,6 +173,40 @@ static u32 cp15Read(int which)
     return v;
 }
 
+// ---------------------------------------------------------------- ipc fifos
+
+#define REG_IPCFIFOCNT  (*(vu16*)0x04000184)
+#define REG_IPCFIFOSEND (*(vu32*)0x04000188)
+#define REG_IPCFIFORECV (*(vu32*)0x04100000)
+#define FIFOCNT_WRITABLE 0x8404 // enable, receive and send irq enables
+
+// count, then the words: what the arm9's receive fifo held on entry, and
+// what the arm7 says its receive fifo held
+static u32 sFifo9[17];
+static u32 sFifo7[17];
+static int sLoaded;
+
+void stateEnter(void* block)
+{
+    sRts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
+    u16 cnt = REG_IPCFIFOCNT;
+    REG_IPCFIFOCNT = cnt | 0x8000; // enabled to read
+    u32 n = 0;
+    while (n < 16 && !(REG_IPCFIFOCNT & 0x100)) // until receive empty
+        sFifo9[1 + n++] = REG_IPCFIFORECV;
+    sFifo9[0] = n;
+    REG_IPCFIFOCNT = (cnt & FIFOCNT_WRITABLE) | 0x4000; // error acknowledged
+}
+
+static void fifoSendFromArm9(const u32* words, u32 count)
+{
+    u16 cnt = REG_IPCFIFOCNT;
+    REG_IPCFIFOCNT = cnt | 0x8000;
+    for (u32 i = 0; i < count && i < 16 && !(REG_IPCFIFOCNT & 2); i++) // not send full
+        REG_IPCFIFOSEND = words[i];
+    REG_IPCFIFOCNT = (cnt & FIFOCNT_WRITABLE) | 0x4000;
+}
+
 static void buildHeader(state_header_t* h, void* block)
 {
     memset(h, 0, 512);
@@ -219,6 +253,10 @@ static void buildHeader(state_header_t* h, void* block)
     h->backdropB = gGameScreen.backdropB;
     h->stashBase = RTS_BASE;
     h->stashSize = RTS_STASH_SIZE;
+    h->fifo9Count = sFifo9[0];
+    memcpy(h->fifo9, &sFifo9[1], 16 * 4);
+    h->fifo7Count = sFifo7[0] <= 16 ? sFifo7[0] : 0;
+    memcpy(h->fifo7, &sFifo7[1], 16 * 4);
 }
 
 // ---------------------------------------------------------------- save
@@ -289,6 +327,7 @@ const char* stateSave(void* block, void (*progress)(u32 done, u32 total))
         offset += step;
     }
 
+    command(RTS_MENU_STATE_FIFO_QUERY, 0, (u32)sFifo7, 0);
     buildHeader((state_header_t*)__scratch, block);
     STEP(writeState(STATE_HEADER, (u32)__scratch, 512));
     while (done < total)
@@ -344,7 +383,7 @@ const char* stateCheck(void* block)
     u32 gameCode = cart[12] | (cart[13] << 8) | (cart[14] << 16) | ((u32)cart[15] << 24);
     if (sHeader.magic != STATE_MAGIC)
         return "slot 1 is empty";
-    if (sHeader.version != STATE_VERSION)
+    if (sHeader.version != STATE_VERSION && sHeader.version != 2)
         return "older format, save again";
     if (sHeader.gameCode != gameCode)
         return "from another game";
@@ -382,6 +421,8 @@ static const u16 sIoRestore[][2] =
     { 0x1008, 8 }, { 0x1048, 4 }, { 0x1050, 2 },                // the same of engine B
     { 0x0E0, 16 },                                              // dma fill values
     { 0x100, 16 },                                              // timers: the count as reload, then the control
+    { 0x280, 2 }, { 0x290, 16 },                                // DIVCNT, numerator, denominator: computes again
+    { 0x2B0, 2 }, { 0x2B8, 8 },                                 // SQRTCNT, parameter: the same
     { 0x210, 4 },                                               // IE
 };
 
@@ -426,13 +467,20 @@ static int restoreMainRam(u32 keep[3][2], void (*progress)(u32 done, u32 total),
 // The game's dma channels from a loaded state, set as the menu leaves (so
 // none writes under the menu): source, destination, control per channel.
 static u32 sDma[4][3];
-static int sDmaPending;
 
 void stateLeave(void)
 {
-    if (!sDmaPending)
+    // The words each cpu had waiting go back the way they came: the arm7 sends
+    // the arm9's, the arm9 the arm7's. Both fifos are empty now: each side
+    // took its own on entry.
+    if (!sLoaded)
+        command(RTS_MENU_STATE_FIFO_QUERY, 0, (u32)sFifo7, 0);
+    command(RTS_MENU_STATE_FIFO_SEND, 0, (u32)&sFifo9[1], sFifo9[0] <= 16 ? sFifo9[0] : 0);
+    fifoSendFromArm9(&sFifo7[1], sFifo7[0] <= 16 ? sFifo7[0] : 0);
+
+    if (!sLoaded)
         return;
-    sDmaPending = 0;
+    sLoaded = 0;
     for (int ch = 0; ch < 4; ch++)
     {
         vu32* dma = (vu32*)(0x040000B0 + ch * 12);
@@ -542,7 +590,15 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     for (int ch = 0; ch < 4; ch++)
         for (int i = 0; i < 3; i++)
             sDma[ch][i] = *(u32*)(__scratch + 0xB0 + ch * 12 + i * 4);
-    sDmaPending = 1;
+    sLoaded = 1;
+    // the loaded session's fifo words replace the running one's
+    sFifo9[0] = h->fifo9Count <= 16 ? h->fifo9Count : 0;
+    memcpy(&sFifo9[1], h->fifo9, 16 * 4);
+    sFifo7[0] = h->fifo7Count <= 16 ? h->fifo7Count : 0;
+    memcpy(&sFifo7[1], h->fifo7, 16 * 4);
+    // the ipc sync output and irq enable (never its send bit), the fifo settings
+    *(vu16*)0x04000180 = *(u16*)(__scratch + 0x180) & 0x4F00;
+    REG_IPCFIFOCNT = (*(u16*)(__scratch + 0x184) & FIFOCNT_WRITABLE) | 0x4000;
     gGameScreen.dispcntA = h->dispcntA;
     gGameScreen.dispcntB = h->dispcntB;
     gGameScreen.dispcapcnt = h->dispcapcnt & ~(1u << 31); // no capture started by this

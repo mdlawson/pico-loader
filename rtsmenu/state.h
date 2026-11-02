@@ -1,5 +1,6 @@
 #pragma once
-// Save state file layout, version 2. One file per game and slot, RTS_STATE_SIZE
+// Save state file layout, version 3 (version 2 files load too: their extra
+// fields are 0). One file per game and slot, RTS_STATE_SIZE
 // (common/sharedMemory.h) bytes, made contiguous by the loader. Offsets are bytes
 // from the start of the file, all sector aligned. The header is written last:
 // a state is valid only when its magic and version match.
@@ -7,7 +8,7 @@
 #include <stdint.h>
 
 #define STATE_MAGIC             0x53545250 // 'PRTS'
-#define STATE_VERSION           2 // 2: with the arm7 context
+#define STATE_VERSION           3 // 2: with the arm7 context; 3: ipc fifo words, more arm7 registers
 
 #define STATE_HEADER            0x000000 // state_header_t, 0x200
 #define STATE_ARM9_IO           0x000200 // 0x1100: 0x04000000-0x04000FFF, then 0x04001000-0x040010FF;
@@ -70,6 +71,12 @@ typedef struct
 
     uint32_t stashBase;         // RTS_BASE; the main ram there comes from the stash file
     uint32_t stashSize;
+
+    // ipc fifo words sent and not read yet, as the freeze found them
+    uint32_t fifo9Count;        // in the arm9's receive fifo (sent by the arm7)
+    uint32_t fifo9[16];
+    uint32_t fifo7Count;        // in the arm7's receive fifo (sent by the arm9)
+    uint32_t fifo7[16];
 } state_header_t;
 
 _Static_assert(sizeof(state_header_t) <= 0x200, "state header is one sector");
@@ -96,3 +103,9 @@ _Static_assert(STATE_MAIN_RAM + 0x400000 == STATE_END, "main ram ends the file")
 #define ARM7_CTX_SOUNDCNT_X     0x80 // 16 words, SOUNDxCNT
 #define ARM7_CTX_WRAM_WORDS     0xC0 // 9 words of the game's under the stub's wait loop
 #define ARM7_CTX_STUB           0xE4 // where the stub was: the same build
+// version 3 (valid when ARM7_CTX_EXT_MAGIC holds 'RTX3'):
+#define ARM7_CTX_DISPSTAT_IPCSYNC 0xE8
+#define ARM7_CTX_FIFOCNT_SPICNT 0xEC
+#define ARM7_CTX_SNDCAPCNT      0xF0
+#define ARM7_CTX_DMACNT_H       0xF4 // two words: channels 0|1 << 16, 2|3 << 16
+#define ARM7_CTX_EXT_MAGIC      0xFC

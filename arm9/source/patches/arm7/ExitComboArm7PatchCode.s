@@ -263,6 +263,32 @@ hold:
     cmpne r3, #0
     beq timedHold
 
+    // What the arm9 sent and this cpu has not read yet: kept here, given back
+    // as the menu leaves (A7FQ), or replaced by a loaded state's.
+    mov r3, #0x04000000
+    add r3, r3, #0x180
+    ldrh r0, [r3, #4] // IPCFIFOCNT
+    orr r1, r0, #0x8000 // enabled to read
+    strh r1, [r3, #4]
+    mov r2, #0
+    add r6, r5, #76 // fifoWords
+    mov r12, #0x04100000
+9:
+    ldrh r1, [r3, #4]
+    tst r1, #0x100 // receive empty
+    bne 9f
+    ldr r1, [r12] // IPCFIFORECV
+    str r1, [r6], #4
+    add r2, r2, #1
+    cmp r2, #16
+    blo 9b
+9:
+    str r2, [r5, #72] // fifoCount
+    ldr r1, fifoCntWritable
+    and r0, r0, r1
+    orr r0, r0, #0x4000 // and the error flag acknowledged
+    strh r0, [r3, #4]
+
     ldr r0, [r4, #0x118] // rts.stashSector
     ldr r1, [r4, #0x114] // rts.base
     ldr r2, [r4, #0x11C] // rts.stashSectorCount
@@ -302,6 +328,12 @@ menuCommand:
     ldr r3, menuStateArm7Load
     cmp r0, r3
     beq arm7Load
+    ldr r3, menuStateFifoQuery
+    cmp r0, r3
+    beq arm7FifoQuery
+    ldr r3, menuStateFifoSend
+    cmp r0, r3
+    beq arm7FifoSend
     ldr r3, menuStateSdRead
     cmp r0, r3
     bne menuAnswered
@@ -386,7 +418,32 @@ arm7Save:
     subs r6, r6, #1
     bne 4b
     adrl r1, patch_exitcombo_arm7_entry // which build of this stub, where
-    str r1, [r0]
+    str r1, [r0], #4
+    // 0xE8: DISPSTAT | IPCSYNC << 16, IPCFIFOCNT | SPICNT << 16,
+    // SNDCAP0CNT/SNDCAP1CNT, the four dma CNT_H in pairs, then their magic
+    ldrh r1, [r3, #4] // r3 = 0x04000000
+    add r2, r3, #0x180
+    ldrh r2, [r2]
+    orr r1, r1, r2, lsl #16
+    add r2, r3, #0x180
+    ldrh r6, [r2, #4]
+    add r2, r3, #0x1C0
+    ldrh r2, [r2]
+    orr r2, r6, r2, lsl #16
+    stmia r0!, {r1, r2}
+    add r2, r3, #0x500
+    ldrh r1, [r2, #8] // 0x04000508
+    str r1, [r0], #4
+    add r2, r3, #0xB8
+    ldrh r1, [r2, #2] // DMA0CNT_H
+    ldrh r6, [r2, #14] // DMA1CNT_H
+    orr r1, r1, r6, lsl #16
+    str r1, [r0], #4
+    ldrh r1, [r2, #26]
+    ldrh r6, [r2, #38]
+    orr r1, r1, r6, lsl #16
+    ldr r6, arm7CtxExtMagic
+    stmia r0!, {r1, r6}
     b arm7Done
 
 arm7Load:
@@ -503,6 +560,98 @@ arm7Load:
     str r12, [r2], #4
     subs r6, r6, #1
     bne 8b
+    // From states that have them (0xFC: their magic).
+    ldr r1, [r0, #0xFC]
+    ldr r2, arm7CtxExtMagic
+    cmp r1, r2
+    bne arm7Done
+    ldr r1, [r0, #0xE8]
+    strh r1, [r3, #4] // DISPSTAT: vcount line and irq enables
+    mov r1, r1, lsr #16
+    and r1, r1, #0x4F00 // IPCSYNC: the output and the irq enable, never the send
+    add r2, r3, #0x180
+    strh r1, [r2]
+    ldr r1, [r0, #0xEC]
+    ldr r12, fifoCntWritable
+    and r12, r1, r12
+    orr r12, r12, #0x4000
+    strh r12, [r2, #4] // IPCFIFOCNT
+    // SPICNT: a transfer the running session left selected ends with one
+    // dummy byte, then the state's settings (not its busy flag)
+    add r2, r3, #0x1C0
+    ldrh r12, [r2]
+    tst r12, #0x800 // chip select hold
+    beq 9f
+    bic r12, r12, #0x800
+    strh r12, [r2]
+    mov r12, #0
+    strh r12, [r2, #2] // SPIDATA
+10:
+    ldrh r12, [r2]
+    tst r12, #0x80 // busy
+    bne 10b
+9:
+    mov r1, r1, lsr #16
+    bic r1, r1, #0x80
+    strh r1, [r2]
+    ldr r1, [r0, #0xF0]
+    add r2, r3, #0x500
+    strh r1, [r2, #8] // SNDCAP0CNT, SNDCAP1CNT
+    // dma: the sources are write only, so only channels the state had off are
+    // stopped; one it had on keeps what the running session set
+    add r1, r0, #0xF4
+    add r2, r3, #0xBA // DMA0CNT_H
+    mov r6, #4
+11:
+    tst r6, #1
+    ldreq r12, [r1], #4 // channels 0 and 2 start a word
+    movne r12, r12, lsr #16
+    tst r12, #0x8000
+    moveq r8, #0
+    strheq r8, [r2]
+    add r2, r2, #12
+    subs r6, r6, #1
+    bne 11b
+    b arm7Done
+
+// The arm7's kept fifo words to the menu: count, then 16 words.
+arm7FifoQuery:
+    ldr r0, [r4, #0x138] // rts.cmdAddress
+    add r1, r5, #72
+    mov r6, #17
+12:
+    ldr r2, [r1], #4
+    str r2, [r0], #4
+    subs r6, r6, #1
+    bne 12b
+    b arm7Done
+
+// Words for the arm9's receive fifo: cmdSectorCount words at cmdAddress.
+arm7FifoSend:
+    ldr r0, [r4, #0x138]
+    ldr r6, [r4, #0x13C]
+    mov r3, #0x04000000
+    add r3, r3, #0x180
+    ldrh r12, [r3, #4]
+    orr r1, r12, #0x8000 // enabled to send
+    strh r1, [r3, #4]
+    cmp r6, #16
+    movhi r6, #16
+13:
+    subs r6, r6, #1
+    bmi 14f
+    ldrh r1, [r3, #4]
+    tst r1, #2 // send full: the arm9 drained its side, so never
+    bne 14f
+    ldr r1, [r0], #4
+    str r1, [r3, #8] // IPCFIFOSEND
+    b 13b
+14:
+    ldr r1, fifoCntWritable
+    and r12, r12, r1
+    orr r12, r12, #0x4000
+    strh r12, [r3, #4]
+    b arm7Done
 arm7Done:
     ldr r2, menuStateDone
 arm7Answer:
@@ -780,6 +929,18 @@ menuStateArm7Save:
 menuStateArm7Load:
     .word 0x444C3741 // RTS_MENU_STATE_ARM7_LOAD
 
+menuStateFifoQuery:
+    .word 0x51463741 // RTS_MENU_STATE_FIFO_QUERY 'A7FQ'
+
+menuStateFifoSend:
+    .word 0x53463741 // RTS_MENU_STATE_FIFO_SEND 'A7FS'
+
+arm7CtxExtMagic:
+    .word 0x33585452 // 'RTX3': the context has the registers at 0xE8
+
+fifoCntWritable:
+    .word 0x8404 // IPCFIFOCNT: enable, receive and send irq enables
+
 pathMagic:
     .word 0x58454C50 // EXIT_REQUEST_PATH_MAGIC
 
@@ -818,6 +979,12 @@ holdSavedIf: // + 32
 
 holdStash: // + 36, nine words
     .space 36
+
+fifoCount: // + 72
+    .word 0
+
+fifoWords: // + 76, sixteen words
+    .space 64
 
 .global patch_exitcombo_arm7_block_address
 patch_exitcombo_arm7_block_address:

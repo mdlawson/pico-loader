@@ -130,6 +130,8 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 // from this same setup.
 #define RTS_MENU_STATE_ARM7_SAVE    0x58433741 // 'A7CX'
 #define RTS_MENU_STATE_ARM7_LOAD    0x444C3741 // 'A7LD'
+#define RTS_MENU_STATE_FIFO_QUERY   0x51463741 // 'A7FQ': the arm7's kept fifo words to cmdAddress
+#define RTS_MENU_STATE_FIFO_SEND    0x53463741 // 'A7FS': cmdSectorCount words to the arm9's fifo
 #define RTS_MENU_STATE_FAIL         0x4C494146 // 'FAIL'
 
 // Save states: one contiguous file per game and slot, made by the loader at boot.

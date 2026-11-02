@@ -22,6 +22,8 @@ typedef volatile u32 vu32;
 #define RTS_MENU_STATE_FAIL     0x4C494146 // 'FAIL'
 #define RTS_MENU_STATE_ARM7_SAVE 0x58433741 // 'A7CX'
 #define RTS_MENU_STATE_ARM7_LOAD 0x444C3741 // 'A7LD'
+#define RTS_MENU_STATE_FIFO_QUERY 0x51463741 // 'A7FQ'
+#define RTS_MENU_STATE_FIFO_SEND 0x53463741 // 'A7FS'
 
 typedef struct
 {
@@ -69,6 +71,8 @@ void readBankedRegs(u32* out); // start.s: spsr_irq, svc, abt, und, sys, fiq
 void writeBankedRegs(const u32* in); // start.s: the same, back
 
 // state.c
+// First thing on entry: takes the words waiting in the arm9's ipc fifo.
+void stateEnter(void* block);
 void stateTakeIo(void);
 // Writes the save state. progress(done, total) is called between steps.
 // Returns 0 on success, or a short reason.
@@ -79,7 +83,8 @@ const char* stateCheck(void* block);
 // it has started, *broken is set when it could not finish (the game's memory
 // is then a mix, and only exiting makes sense).
 const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* broken);
-// After a load, sets what has to wait until the menu is gone (the dma channels).
+// Last thing before resuming, the screens given back: both ipc fifos as they
+// were (or as the loaded state had them), and after a load the dma channels.
 void stateLeave(void);
 
 static inline void dcFlushAll(void)
