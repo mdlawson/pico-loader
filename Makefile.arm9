@@ -25,6 +25,11 @@ AUDIODIRS	:=
 PLATFORM	?= DSPICO
 
 DEFINES		:= -DLIBTWL_ARM9 -DARM9 -DPICO_LOADER_TARGET_$(PLATFORM)
+# RTS_CENSUS=1: build in the register-write census (a measurement build)
+ifeq ($(RTS_CENSUS),1)
+DEFINES		+= -DRTS_CENSUS
+NAME_SUFFIX	:= _census
+endif
 
 # Libraries
 # ---------
@@ -36,7 +41,7 @@ LIBDIRS		:= $(BLOCKSDS)/libs/libnds \
 # Build artifacts
 # ---------------
 
-NAME		:= picoLoader9_$(PLATFORM)
+NAME		:= picoLoader9_$(PLATFORM)$(NAME_SUFFIX)
 BUILDDIR	:= build/$(NAME)
 BIN     := $(NAME).bin
 ELF		:= build/$(NAME).elf

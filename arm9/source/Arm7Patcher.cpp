@@ -200,7 +200,11 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         // and the hook opens the sdk's region 2 there for it.
         censusSpace = nullptr;
         censusRunAddress = 0;
+#ifdef RTS_CENSUS
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
+#else
+        if (false)
+#endif
         {
             u32 start = (mainMemoryArenaLo + 31) & ~31u;
             u32 offset = start & 0x3FFFFF;

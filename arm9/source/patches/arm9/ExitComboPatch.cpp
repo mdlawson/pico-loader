@@ -183,9 +183,13 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     u32 gateSize = SECTION_SIZE(patch_census_gate);
     void* gateAddress = nullptr;
     static_assert(sizeof(_censusGateSaved) >= 44);
+#ifndef RTS_CENSUS
+    if (false)
+#else
     if (!_twlSdk && gateSize <= sizeof(_censusGateSaved)
         && patchHeap.CanAllocInOrder(&gateSize, 1, &gateAddress)
         && !HoldsArmBranch(gateAddress, gateSize))
+#endif
     {
         for (u32 j = 0; j < gateSize / 4; j++)
             _censusGateSaved[j] = ((const u32*)gateAddress)[j];
