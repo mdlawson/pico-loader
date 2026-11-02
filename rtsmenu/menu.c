@@ -104,6 +104,7 @@ static void giveScreensBack(void)
     REG_DISPCNT_B = gGameScreen.dispcntB;
     REG_DISPCNT_A = gGameScreen.dispcntA;
     REG_DISPCAPCNT = gGameScreen.dispcapcnt;
+    stateLeave();
 }
 
 // ---------------------------------------------------------------- drawing

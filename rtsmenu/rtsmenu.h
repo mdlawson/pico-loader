@@ -79,6 +79,8 @@ const char* stateCheck(void* block);
 // it has started, *broken is set when it could not finish (the game's memory
 // is then a mix, and only exiting makes sense).
 const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* broken);
+// After a load, sets what has to wait until the menu is gone (the dma channels).
+void stateLeave(void);
 
 static inline void dcFlushAll(void)
 {

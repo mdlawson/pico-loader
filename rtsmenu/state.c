@@ -423,6 +423,32 @@ static int restoreMainRam(u32 keep[3][2], void (*progress)(u32 done, u32 total),
     return 1;
 }
 
+// The game's dma channels from a loaded state, set as the menu leaves (so
+// none writes under the menu): source, destination, control per channel.
+static u32 sDma[4][3];
+static int sDmaPending;
+
+void stateLeave(void)
+{
+    if (!sDmaPending)
+        return;
+    sDmaPending = 0;
+    for (int ch = 0; ch < 4; ch++)
+    {
+        vu32* dma = (vu32*)(0x040000B0 + ch * 12);
+        dma[2] = 0; // stop what the running session had; the next enable reloads
+        u32 control = sDma[ch][2];
+        u32 timing = (control >> 27) & 7;
+        // only the repeating ones the display starts; one-shot transfers ended
+        // long ago in the saved session, and card or 3d fifo ones need their source
+        if (!(control & (1u << 31)) || !(control & (1u << 25)) || timing < 1 || timing > 4)
+            continue;
+        dma[0] = sDma[ch][0];
+        dma[1] = sDma[ch][1];
+        dma[2] = control;
+    }
+}
+
 static const char* load(void* block, void (*progress)(u32 done, u32 total), int* broken)
 {
     *broken = 0;
@@ -513,6 +539,10 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     for (u32 i = 0; i < sizeof(sIoRestore) / sizeof(sIoRestore[0]); i++)
         for (u32 b = 0; b < sIoRestore[i][1]; b += 2)
             *(vu16*)(0x04000000 + sIoRestore[i][0] + b) = *(u16*)(__scratch + sIoRestore[i][0] + b);
+    for (int ch = 0; ch < 4; ch++)
+        for (int i = 0; i < 3; i++)
+            sDma[ch][i] = *(u32*)(__scratch + 0xB0 + ch * 12 + i * 4);
+    sDmaPending = 1;
     gGameScreen.dispcntA = h->dispcntA;
     gGameScreen.dispcntB = h->dispcntB;
     gGameScreen.dispcapcnt = h->dispcapcnt & ~(1u << 31); // no capture started by this
