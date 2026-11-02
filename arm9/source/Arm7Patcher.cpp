@@ -200,7 +200,6 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         // and the hook opens the sdk's region 2 there for it.
         censusSpace = nullptr;
         censusRunAddress = 0;
-        u32 censusNote = 0;
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
         {
             u32 start = (mainMemoryArenaLo + 31) & ~31u;
@@ -211,17 +210,13 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
                 // the game's: the arm9's protection unit only maps the 4 MB
                 censusSpace = (void*)correctAddress(start, romHeader);
                 censusRunAddress = 0x02000000 + offset;
-                censusNote = censusRunAddress;
                 mainMemoryArenaLo = start + CENSUS_SPACE_SIZE;
                 LOG_DEBUG("Census space at 0x%x, written at 0x%p\n", censusRunAddress, censusSpace);
             }
             else
             {
-                // odd: tells the menu there was no room, and where the arena was
-                censusNote = (mainMemoryArenaLo & ~3u) | 1;
                 LOG_DEBUG("No census space: arm7 main memory arena at 0x%x\n", mainMemoryArenaLo);
             }
-            exitComboArm7Patch->SetCensusNote(censusNote);
         }
 
         if (exitComboArm7Patch != nullptr)

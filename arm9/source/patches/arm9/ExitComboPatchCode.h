@@ -4,6 +4,10 @@
 #include "sharedMemory.h"
 
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_hook);
+DEFINE_SECTION_SYMBOLS(patch_census_gate);
+
+extern "C" void patch_census_gate_entry();
+extern u32 patch_census_gate_target;
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_check);
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_wait);
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_teardown);
@@ -18,7 +22,6 @@ extern u32 patch_exitcombo_hook_check_address;
 extern u32 patch_exitcombo_hook_table_address;
 extern u32 patch_exitcombo_hook_return_address;
 extern u32 patch_exitcombo_hook_census_address;
-extern u32 patch_exitcombo_hook_census_unlock;
 extern u32 patch_exitcombo_check_wait_address;
 extern u32 patch_exitcombo_wait_teardown_address;
 extern u32 patch_exitcombo_teardown_resetpool_address;
@@ -89,7 +92,6 @@ public:
         patch_exitcombo_hook_table_address = irqTableAddress;
         patch_exitcombo_hook_return_address = irqReturnAddress;
         patch_exitcombo_hook_census_address = 0;
-        patch_exitcombo_hook_census_unlock = 0;
     }
 
     /// @brief Where the hook's census literal landed, for the loader to fill
@@ -99,14 +101,29 @@ public:
         return (u32*)GetAddressAtTarget((void*)&patch_exitcombo_hook_census_address);
     }
 
-    /// @brief The hook's region 2 permission bits for the census, 0 when not needed.
-    u32* GetCensusUnlockAtTarget() const
+    const void* GetEntryFunction() const
     {
-        return (u32*)GetAddressAtTarget((void*)&patch_exitcombo_hook_census_unlock);
+        return GetAddressAtTarget((void*)patch_exitcombo_hook_entry);
+    }
+};
+
+/// @brief Opens the sdk's region 2 for the arm9, then goes on into the census.
+class CensusGatePatchCode : public PatchCode
+{
+public:
+    explicit CensusGatePatchCode(PatchHeap& patchHeap)
+        : PatchCode(SECTION_START(patch_census_gate), SECTION_SIZE(patch_census_gate), patchHeap)
+    {
+        patch_census_gate_target = 0;
+    }
+
+    u32* GetTargetLiteralAtTarget() const
+    {
+        return (u32*)GetAddressAtTarget((void*)&patch_census_gate_target);
     }
 
     const void* GetEntryFunction() const
     {
-        return GetAddressAtTarget((void*)patch_exitcombo_hook_entry);
+        return GetAddressAtTarget((void*)patch_census_gate_entry);
     }
 };

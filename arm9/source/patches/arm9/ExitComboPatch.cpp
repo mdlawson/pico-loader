@@ -168,7 +168,6 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     _savedTail[1] = _dispatchTail[1];
     _hookEntry = (u32)hook->GetEntryFunction();
     _censusLiteral = hook->GetCensusLiteralAtTarget();
-    _censusUnlock = hook->GetCensusUnlockAtTarget();
     _blockAddress = blockAddress;
     _twlSdk = patchContext.GetSdkVersion().IsTwlSdk() ? 1 : 0;
     _dispatchTail[0] = 0xE51FF004; // ldr pc,= address
@@ -176,11 +175,34 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     _installed = 1;
 
     LOG_DEBUG("Exit combo enabled\n");
+
+    // The census gate, only if there is room left after everything else: the
+    // census goes without it, the exit combo never does.
+    _censusGateTarget = nullptr;
+    _censusGateAddress = 0;
+    u32 gateSize = SECTION_SIZE(patch_census_gate);
+    void* gateAddress = nullptr;
+    static_assert(sizeof(_censusGateSaved) >= 44);
+    if (!_twlSdk && gateSize <= sizeof(_censusGateSaved)
+        && patchHeap.CanAllocInOrder(&gateSize, 1, &gateAddress)
+        && !HoldsArmBranch(gateAddress, gateSize))
+    {
+        for (u32 j = 0; j < gateSize / 4; j++)
+            _censusGateSaved[j] = ((const u32*)gateAddress)[j];
+        auto gate = patchCodes.AddUniquePatchCode<CensusGatePatchCode>(patchHeap);
+        if (gate->GetEntryFunction() == gateAddress)
+        {
+            _censusGateAddress = (u32)gateAddress;
+            _censusGateEntry = (u32)gate->GetEntryFunction();
+            _censusGateTarget = gate->GetTargetLiteralAtTarget();
+            LOG_DEBUG("Census gate 0x%p\n", gateAddress);
+        }
+    }
 }
 
 bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
 {
-    if (!_installed || !_censusLiteral || !_censusUnlock || _twlSdk || !space || !runAddress)
+    if (!_installed || !_censusLiteral || !_censusGateTarget || _twlSdk || !space || !runAddress)
         return false;
     u32 size = SECTION_SIZE(patch_census);
     if (size > CENSUS_ARRAYS)
@@ -200,9 +222,9 @@ bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
     words[CENSUS_V_BSTACK / 4] = vector - 0x10; // the bios's control, spsr, r12, lr
     words[CENSUS_V_ARRAYS / 4] = runAddress + CENSUS_ARRAYS;
     words[CENSUS_V_MAGIC / 4] = CENSUS_MAGIC;
-    // in the arm7's part of main memory the hook opens the sdk's region 2 first
-    *_censusUnlock = runAddress + CENSUS_SPACE_SIZE > 0x023E0000 ? 0x300 : 0;
-    *_censusLiteral = runAddress + ((u32)&patch_census_tick_entry - (u32)SECTION_START(patch_census));
+    // the hook calls the gate, which opens the sdk's region 2 and goes on into the census
+    *_censusGateTarget = runAddress + ((u32)&patch_census_tick_entry - (u32)SECTION_START(patch_census));
+    *_censusLiteral = _censusGateEntry;
     LOG_DEBUG("Census at 0x%x, written at 0x%p\n", runAddress, space);
     return true;
 }
@@ -228,11 +250,19 @@ void ExitComboPatch::Deactivate()
             region[j] = _savedGameWords[savedWords++];
     }
 
+    if (_censusGateAddress)
+    {
+        u32* region = (u32*)_censusGateAddress;
+        for (u32 j = 0; j < SECTION_SIZE(patch_census_gate) / 4; j++)
+            region[j] = _censusGateSaved[j];
+        _censusGateAddress = 0;
+    }
+
     delete[] _savedGameWords;
     _savedGameWords = nullptr;
     _installed = 0;
     _censusLiteral = nullptr;
-    _censusUnlock = nullptr;
+    _censusGateTarget = nullptr;
 
     LOG_DEBUG("Exit combo taken back out\n");
 }

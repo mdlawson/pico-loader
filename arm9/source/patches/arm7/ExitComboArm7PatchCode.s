@@ -272,9 +272,6 @@ hold:
     strne r2, [r4, #0x140] // rts.arm7PatchStart
     ldrne r2, patch_exitcombo_arm7_space_size
     strne r2, [r4, #0x144] // rts.arm7PatchSize
-    ldr r2, patch_exitcombo_arm7_census_note
-    cmp r2, #0
-    strne r2, [r4, #0x164] // rts.censusStart, or why there is none
     ldr r3, regIme
     ldr r2, [r3]
     str r2, [r5, #24] // holdSavedIme
@@ -1063,10 +1060,6 @@ patch_exitcombo_arm7_space_address:
 
 .global patch_exitcombo_arm7_space_size
 patch_exitcombo_arm7_space_size:
-    .word 0
-
-.global patch_exitcombo_arm7_census_note
-patch_exitcombo_arm7_census_note:
     .word 0
 
 .global patch_exitcombo_arm7_sdread_address

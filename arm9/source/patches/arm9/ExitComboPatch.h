@@ -40,7 +40,10 @@ private:
     u32 _savedRegionCount = 0;
     u32 _installed = 0;
     u32* _censusLiteral = nullptr;
-    u32* _censusUnlock = nullptr;
+    u32* _censusGateTarget = nullptr; // in the optional gate piece, nullptr without one
+    u32 _censusGateEntry = 0;
+    u32 _censusGateAddress = 0;
+    u32 _censusGateSaved[16]; // what the game had where the gate went
     u32 _blockAddress = 0;
     u32 _twlSdk = 0;
 };

@@ -27,27 +27,10 @@ patch_exitcombo_hook_entry:
     cmp r0, #0 // irq index 0 = vblank
     bne 1f
     // the register-write census, when the loader put one in (it keeps r4-r11)
+    // (through the census gate below; the hook stays as small as it was)
     ldr r12, patch_exitcombo_hook_census_address
     cmp r12, #0
-    beq 2f
-    // When it lives in the arm7's part of main memory, give the arm9 the
-    // sdk's no-access region there (region 2, 0x023E0000) for data and code.
-    // 0 when not needed; the census only ever uses the space the arm7 gave up.
-    ldr r1, patch_exitcombo_hook_census_unlock
-    mrc p15, 0, r2, c5, c0, 2
-    orr r2, r2, r1
-    mcr p15, 0, r2, c5, c0, 2
-    mrc p15, 0, r2, c5, c0, 3
-    orr r2, r2, r1
-    mcr p15, 0, r2, c5, c0, 3
-    // and its instruction cache: only the census's code runs there (its data
-    // stays uncached, the menu's sd buffer shares the region)
-    cmp r1, #0
-    mrcne p15, 0, r2, c2, c0, 1
-    orrne r2, r2, #4
-    mcrne p15, 0, r2, c2, c0, 1
-    blx r12
-2:
+    blxne r12
     mov r0, #0
     ldr r1, patch_exitcombo_hook_block_address
     mcr p15, 0, r1, c7, c6, 1 // invalidate the line, the arm7 has no cache
@@ -83,9 +66,6 @@ patch_exitcombo_hook_return_address:
     .word 0
 .global patch_exitcombo_hook_census_address
 patch_exitcombo_hook_census_address:
-    .word 0
-.global patch_exitcombo_hook_census_unlock
-patch_exitcombo_hook_census_unlock:
     .word 0
 
 // ---------------------------------------------------------------- check
@@ -221,6 +201,32 @@ patch_exitcombo_teardown_resetpool_address:
     .word 0
 .global patch_exitcombo_teardown_bootloaderbinaries_address
 patch_exitcombo_teardown_bootloaderbinaries_address:
+    .word 0
+
+
+// ---------------------------------------------------------------- census gate
+// Optional, its own piece: the hook calls it with lr = back into the hook. The
+// census lives in the arm7's corner of main memory, so first give the arm9 the
+// sdk's no-access region there (region 2, 0x023E0000) for data and code, and
+// that region's instruction cache (only the census's code runs there; its data
+// stays uncached, the menu's sd buffer shares the region). Then on into the
+// census, which returns to the hook.
+.section "patch_census_gate", "ax"
+.global patch_census_gate_entry
+.type patch_census_gate_entry, %function
+patch_census_gate_entry:
+    mrc p15, 0, r2, c5, c0, 2
+    orr r2, r2, #0x300
+    mcr p15, 0, r2, c5, c0, 2
+    mrc p15, 0, r2, c5, c0, 3
+    orr r2, r2, #0x300
+    mcr p15, 0, r2, c5, c0, 3
+    mrc p15, 0, r2, c2, c0, 1
+    orr r2, r2, #4
+    mcr p15, 0, r2, c2, c0, 1
+    ldr pc, patch_census_gate_target
+.global patch_census_gate_target
+patch_census_gate_target:
     .word 0
 
 .end

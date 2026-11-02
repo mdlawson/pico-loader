@@ -20,9 +20,6 @@ public:
     bool IsInstalled() const { return _installed != 0; }
     /// @brief Where the arm7 patch space is, for the stub to keep in the rts info.
     void SetPatchSpace(u32 address) { _patchSpaceAddress = address; }
-    /// @brief The census address for the stub to keep in the rts info, or the
-    ///        arm7 arena with bit 0 set when there was no room for one.
-    void SetCensusNote(u32 note) { _censusNote = note; }
 
 private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.
@@ -32,5 +29,4 @@ private:
     u32 _searched = 0;
     u32 _installed = 0;
     u32 _patchSpaceAddress = 0;
-    u32 _censusNote = 0;
 };
