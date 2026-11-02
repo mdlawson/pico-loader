@@ -45,7 +45,8 @@
 static volatile u32* vars(void)
 {
     u32 start = sRts->censusStart;
-    if (!start)
+    // 0 or odd (the loader's note that there was no room) is no census
+    if (start < 0x02000000 || start >= 0x02400000 || (start & 3))
         return 0;
     volatile u32* v = (volatile u32*)start;
     return v[V_MAGIC / 4] == CENSUS_MAGIC ? v : 0;
@@ -244,12 +245,19 @@ u32 censusReport(char* out, u32 size, char* line1, char* line2)
     {
         put("No census in this boot: it needs the exit combo, an ntr sdk game and room in the");
         newline();
-        put("arm7's main memory arena (see the loader's log).");
+        put("arm7's main memory arena.");
         newline();
         u32 start = sRts->censusStart;
+        if (start & 1)
+        {
+            put("The loader found no room: the arm7's main memory arena starts at ");
+            putHex(start & ~3u, 8);
+            put(".");
+            newline();
+        }
         put("rts info: census at ");
         putHex(start, 8);
-        if (start >= 0x02000000 && start < 0x02400000)
+        if (start >= 0x02000000 && start < 0x02400000 && !(start & 3))
         {
             put(", magic there ");
             putHex(((volatile u32*)start)[V_MAGIC / 4], 8);

@@ -168,6 +168,7 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     _savedTail[1] = _dispatchTail[1];
     _hookEntry = (u32)hook->GetEntryFunction();
     _censusLiteral = hook->GetCensusLiteralAtTarget();
+    _censusUnlock = hook->GetCensusUnlockAtTarget();
     _blockAddress = blockAddress;
     _twlSdk = patchContext.GetSdkVersion().IsTwlSdk() ? 1 : 0;
     _dispatchTail[0] = 0xE51FF004; // ldr pc,= address
@@ -179,7 +180,7 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
 
 bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
 {
-    if (!_installed || !_censusLiteral || _twlSdk || !space || !runAddress)
+    if (!_installed || !_censusLiteral || !_censusUnlock || _twlSdk || !space || !runAddress)
         return false;
     u32 size = SECTION_SIZE(patch_census);
     if (size > CENSUS_ARRAYS)
@@ -199,6 +200,8 @@ bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
     words[CENSUS_V_BSTACK / 4] = vector - 0x10; // the bios's control, spsr, r12, lr
     words[CENSUS_V_ARRAYS / 4] = runAddress + CENSUS_ARRAYS;
     words[CENSUS_V_MAGIC / 4] = CENSUS_MAGIC;
+    // in the arm7's part of main memory the hook opens the sdk's region 2 first
+    *_censusUnlock = runAddress + CENSUS_SPACE_SIZE > 0x023E0000 ? 0x300 : 0;
     *_censusLiteral = runAddress + ((u32)&patch_census_tick_entry - (u32)SECTION_START(patch_census));
     LOG_DEBUG("Census at 0x%x, written at 0x%p\n", runAddress, space);
     return true;
@@ -229,6 +232,7 @@ void ExitComboPatch::Deactivate()
     _savedGameWords = nullptr;
     _installed = 0;
     _censusLiteral = nullptr;
+    _censusUnlock = nullptr;
 
     LOG_DEBUG("Exit combo taken back out\n");
 }

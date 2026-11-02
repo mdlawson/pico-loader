@@ -542,7 +542,7 @@ void mainRamKeep(void* block, u32 keep[KEEP_RANGES][2])
     // the census counts on through a load, and its variables say what the
     // protection unit holds now
     keep[3][0] = keep[3][1] = 0;
-    if (sRts->censusStart >= 0x02000000 && sRts->censusStart < 0x03000000)
+    if (sRts->censusStart >= 0x02000000 && sRts->censusStart < 0x03000000 && !(sRts->censusStart & 3))
     {
         keep[3][0] = sRts->censusStart & 0x3FFFFF;
         keep[3][1] = keep[3][0] + CENSUS_SPACE_SIZE;

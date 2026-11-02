@@ -40,6 +40,7 @@ private:
     u32 _savedRegionCount = 0;
     u32 _installed = 0;
     u32* _censusLiteral = nullptr;
+    u32* _censusUnlock = nullptr;
     u32 _blockAddress = 0;
     u32 _twlSdk = 0;
 };

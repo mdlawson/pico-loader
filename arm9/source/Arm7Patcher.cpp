@@ -193,27 +193,35 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             patchCollection.AddPatch(exitComboArm7Patch);
         }
 
-        // The register-write census, for the exit combo's hook to run on the arm9:
-        // the arm9 must reach it with its protection unit on, so it has to end
-        // below the sdk's no-access region for the arm7 (0x023E0000).
+        // The register-write census, for the exit combo's hook to run on the arm9,
+        // from the start of the arm7's main memory arena. That arena is usually
+        // in the arm7's own corner (0x027E0000 and up, below the shared page);
+        // the arm9 runs the census through the 4 MB view of the same memory,
+        // and the hook opens the sdk's region 2 there for it.
         censusSpace = nullptr;
         censusRunAddress = 0;
+        u32 censusNote = 0;
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
         {
             u32 start = (mainMemoryArenaLo + 31) & ~31u;
-            if (start >= 0x02000000 && start + CENSUS_SPACE_SIZE <= 0x023E0000)
+            u32 offset = start & 0x3FFFFF;
+            if (start >= 0x02000000 && start < 0x02800000 && offset + CENSUS_SPACE_SIZE <= 0x3FF000)
             {
                 // written through the loader's view of main memory, run at
                 // the game's: the arm9's protection unit only maps the 4 MB
                 censusSpace = (void*)correctAddress(start, romHeader);
-                censusRunAddress = start;
+                censusRunAddress = 0x02000000 + offset;
+                censusNote = censusRunAddress;
                 mainMemoryArenaLo = start + CENSUS_SPACE_SIZE;
-                LOG_DEBUG("Census space at 0x%p\n", censusSpace);
+                LOG_DEBUG("Census space at 0x%x, written at 0x%p\n", censusRunAddress, censusSpace);
             }
             else
             {
+                // odd: tells the menu there was no room, and where the arena was
+                censusNote = (mainMemoryArenaLo & ~3u) | 1;
                 LOG_DEBUG("No census space: arm7 main memory arena at 0x%x\n", mainMemoryArenaLo);
             }
+            exitComboArm7Patch->SetCensusNote(censusNote);
         }
 
         if (exitComboArm7Patch != nullptr)

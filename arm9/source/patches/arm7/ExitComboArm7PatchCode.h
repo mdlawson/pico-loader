@@ -15,6 +15,7 @@ extern u32 patch_exitcombo_arm7_return_address;
 extern u32 patch_exitcombo_arm7_prioreturn_offset;
 extern u32 patch_exitcombo_arm7_space_address;
 extern u32 patch_exitcombo_arm7_space_size;
+extern u32 patch_exitcombo_arm7_census_note;
 extern u32 patch_exitcombo_arm7_sdread_address;
 extern u32 patch_exitcombo_arm7_sdwrite_address;
 
@@ -23,7 +24,7 @@ class ExitComboArm7PatchCode : public PatchCode
 public:
     ExitComboArm7PatchCode(PatchHeap& patchHeap, u32 blockAddress, u32 sdReadAddress,
         u32 sdWriteAddress, u32 irqTableAddress, u32 irqReturnAddress, u32 prioReturnOffset,
-        u32 patchSpaceAddress, u32 patchSpaceSize)
+        u32 patchSpaceAddress, u32 patchSpaceSize, u32 censusNote)
         : PatchCode(SECTION_START(patch_exitcombo_arm7), SECTION_SIZE(patch_exitcombo_arm7), patchHeap)
     {
         patch_exitcombo_arm7_block_address = blockAddress;
@@ -34,6 +35,7 @@ public:
         patch_exitcombo_arm7_prioreturn_offset = prioReturnOffset;
         patch_exitcombo_arm7_space_address = patchSpaceAddress;
         patch_exitcombo_arm7_space_size = patchSpaceSize;
+        patch_exitcombo_arm7_census_note = censusNote;
     }
 
     const void* GetExitComboFunction() const
