@@ -126,6 +126,19 @@ dropRequest:
     b dispatch
 
 noRequest:
+    // The rts menu's restore test: freeze by itself after rts.testFrames vblanks.
+    ldr r2, [r1, #0x148] // rts.testFrames
+    cmp r2, #0
+    beq 1f
+    subs r2, r2, #1
+    str r2, [r1, #0x148]
+    bne dispatch
+    ldr r3, freezeComboMagic
+    str r3, [r12, #20] // requestKind
+    mov r2, #1
+    str r2, [r12, #4] // requestFrames: out on the next quiet vblank
+    b dispatch
+1:
     // L+R+Select plus Right is the exit, plus Up the freeze test. Keys are
     // active low; the keycnt half of the word is never tested.
     ldr r2, regKeyInput
@@ -334,6 +347,9 @@ menuCommand:
     ldr r3, menuStateFifoSend
     cmp r0, r3
     beq arm7FifoSend
+    ldr r3, menuStateArm7Copy
+    cmp r0, r3
+    beq arm7Copy
     ldr r3, menuStateSdRead
     cmp r0, r3
     bne menuAnswered
@@ -612,6 +628,19 @@ arm7Load:
     add r2, r2, #12
     subs r6, r6, #1
     bne 11b
+    b arm7Done
+
+// Memory only this cpu sees, for the menu's checks: cmdSectorCount bytes (a
+// multiple of 4) from the address in cmdSector to cmdAddress.
+arm7Copy:
+    ldr r0, [r4, #0x134]
+    ldr r1, [r4, #0x138]
+    ldr r6, [r4, #0x13C]
+15:
+    subs r6, r6, #4
+    ldrpl r2, [r0], #4
+    strpl r2, [r1], #4
+    bhi 15b
     b arm7Done
 
 // The arm7's kept fifo words to the menu: count, then 16 words.
@@ -934,6 +963,9 @@ menuStateFifoQuery:
 
 menuStateFifoSend:
     .word 0x53463741 // RTS_MENU_STATE_FIFO_SEND 'A7FS'
+
+menuStateArm7Copy:
+    .word 0x50433741 // RTS_MENU_STATE_ARM7_COPY 'A7CP'
 
 arm7CtxExtMagic:
     .word 0x33585452 // 'RTX3': the context has the registers at 0xE8

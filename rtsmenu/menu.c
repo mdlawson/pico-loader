@@ -160,21 +160,24 @@ static void drawText(int x, int y, const char* text, u16 ink, u16 paper)
 #define COLOR_BAD       RGB(30, 12, 10)
 #define COLOR_BAR       RGB(10, 18, 30)
 
-enum { ITEM_RESUME, ITEM_SAVE, ITEM_LOAD, ITEM_EXIT };
+enum { ITEM_RESUME, ITEM_SAVE, ITEM_LOAD, ITEM_TEST_SAVE, ITEM_TEST_LOAD, ITEM_EXIT };
 
 static const char* const sLabels[] =
 {
     [ITEM_RESUME] = "Resume game",
     [ITEM_SAVE] = "Save state (slot 1)",
     [ITEM_LOAD] = "Load state (slot 1)",
+    [ITEM_TEST_SAVE] = "Test: save + reference",
+    [ITEM_TEST_LOAD] = "Test: load + compare",
     [ITEM_EXIT] = "Exit to launcher",
 };
 
-static int sItems[4];
+static int sItems[6];
 static int sItemCount;
 
-#define ITEMS_Y     54
-#define STATUS_Y    136
+#define ITEMS_Y     44
+#define ITEM_STEP   17
+#define STATUS_Y    148
 
 static void drawGameLine(const u8* header)
 {
@@ -188,44 +191,71 @@ static void drawGameLine(const u8* header)
         line[n++] = header[12 + i] ? header[12 + i] : '?';
     line[n++] = ')';
     line[n] = 0;
-    drawText(8, 30, line, COLOR_DIM, COLOR_BG);
+    drawText(8, 25, line, COLOR_DIM, COLOR_BG);
 }
 
 static void drawItems(int selected)
 {
     for (int i = 0; i < sItemCount; i++)
     {
-        int y = ITEMS_Y + i * 20;
+        int y = ITEMS_Y + i * ITEM_STEP;
         u16 paper = i == selected ? COLOR_SELECT_BG : COLOR_BG;
         u16 ink = i == selected ? COLOR_SELECT : COLOR_TEXT;
-        fillRect(8, y - 2, SCREEN_W - 16, 20, paper);
+        fillRect(8, y - 1, SCREEN_W - 16, ITEM_STEP, paper);
         drawText(16, y, sLabels[sItems[i]], ink, paper);
     }
 }
 
 static void drawStatus(const char* text, u16 ink)
 {
-    fillRect(0, STATUS_Y, SCREEN_W, 20, COLOR_BG);
+    fillRect(0, STATUS_Y, SCREEN_W, 24, COLOR_BG); // the line and the progress bar
     if (text)
         drawText(8, STATUS_Y, text, ink, COLOR_BG);
+}
+
+// a second line, where the progress bar goes
+static void drawStatus2(const char* text, u16 ink)
+{
+    fillRect(0, STATUS_Y + 16, SCREEN_W, SCREEN_H - STATUS_Y - 16, COLOR_BG); // over the key help
+    if (text)
+        drawText(8, STATUS_Y + 16, text, ink, COLOR_BG);
+}
+
+// text then a number then text, into line (33 bytes)
+static const char* textNumber(char* line, const char* a, u32 v, const char* b)
+{
+    int n = 0;
+    while (*a && n < 32)
+        line[n++] = *a++;
+    char digits[11];
+    int d = 0;
+    do
+        digits[d++] = '0' + v % 10;
+    while ((v /= 10) && d < 10);
+    while (d && n < 32)
+        line[n++] = digits[--d];
+    while (*b && n < 32)
+        line[n++] = *b++;
+    line[n] = 0;
+    return line;
 }
 
 static void drawProgress(u32 done, u32 total)
 {
     // the step as text too, so a stop can be told apart from a slow step
-    char count[8];
+    char count[10];
     int n = 0;
-    if (done >= 10)
-        count[n++] = '0' + done / 10 % 10;
-    count[n++] = '0' + done % 10;
+    for (u32 div = 1000; div; div /= 10)
+        if (done >= div || div == 1)
+            count[n++] = '0' + done / div % 10;
     count[n++] = '/';
-    if (total >= 10)
-        count[n++] = '0' + total / 10 % 10;
-    count[n++] = '0' + total % 10;
-    while (n < 7)
+    for (u32 div = 1000; div; div /= 10)
+        if (total >= div || div == 1)
+            count[n++] = '0' + total / div % 10;
+    while (n < 9)
         count[n++] = ' ';
     count[n] = 0;
-    drawText(SCREEN_W - 8 - 7 * 8, STATUS_Y, count, COLOR_DIM, COLOR_BG);
+    drawText(SCREEN_W - 8 - 9 * 8, STATUS_Y, count, COLOR_DIM, COLOR_BG); // status text up to 21 characters
     const int x = 8, y = STATUS_Y + 18, w = SCREEN_W - 16, h = 6;
     int filled = (int)(done * (u32)w / total);
     fillRect(x, y, filled, h, COLOR_BAR);
@@ -256,25 +286,24 @@ static void drawProblem(const char* prefix, const char* problem)
     drawStatus(line, COLOR_BAD);
 }
 
-static void saveState(void* block)
+static int saveState(void* block)
 {
     drawStatus("Saving state...", COLOR_TEXT);
     drawProgress(0, 1);
-    const char* problem = stateSave(block, drawProgress);
+    const char* problem = stateSave(block, 1, drawProgress);
     fillRect(0, STATUS_Y + 18, SCREEN_W, 6, COLOR_BG);
     if (problem)
     {
         drawProblem("Save failed: ", problem);
+        return 0;
     }
-    else
-    {
-        drawStatus("Saved to slot 1.", COLOR_GOOD);
-    }
+    drawStatus("Saved to slot 1.", COLOR_GOOD);
+    return 1;
 }
 
 // Asks for A once more, then loads. Returns 1 when the game should resume
 // from the loaded state; sets *broken when it can only exit.
-static int loadState(void* block, int* broken)
+static int loadState(void* block, int* broken, int check)
 {
     *broken = 0;
     const char* problem = stateCheck(block);
@@ -301,7 +330,49 @@ static int loadState(void* block, int* broken)
         drawProblem(*broken ? "Load broke: " : "Can't load: ", problem);
         return 0;
     }
+    if (check)
+    {
+        volatile rts_info_t* rts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
+        drawStatus("Checking memory...", COLOR_TEXT);
+        drawProgress(0, 1);
+        rts->testResult = checkLoadedMemory(block, drawProgress);
+        gCheckOnLeave = 1; // the registers once the menu is gone, then the log
+    }
     return 1;
+}
+
+// The test's own freeze: write its snapshot, and after a load + compare
+// compare it with the reference.
+static void testFreeze(void* block, u32 mode)
+{
+    volatile rts_info_t* rts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
+    char line[33];
+    drawStatus(mode == TEST_REFERENCE ? "Writing slot 2..." : "Writing slot 3...", COLOR_TEXT);
+    drawProgress(0, 1);
+    const char* problem = stateSave(block, mode == TEST_REFERENCE ? 2 : 3, drawProgress);
+    if (problem)
+    {
+        drawProblem("Test failed: ", problem);
+        return;
+    }
+    if (mode == TEST_REFERENCE)
+    {
+        drawStatus("Reference saved to slot 2.", COLOR_GOOD);
+        drawStatus2("Next: Test: load + compare", COLOR_TEXT);
+        return;
+    }
+    drawStatus("Comparing 2 and 3...", COLOR_TEXT);
+    drawProgress(0, 1);
+    u32 differ = compareTestSlots(block, drawProgress);
+    u32 memory = rts->testResult & 0xFFFF, registers = rts->testResult >> 16;
+    if (!memory && !registers)
+        drawStatus("Load check: all as saved", COLOR_GOOD);
+    else
+        drawStatus(textNumber(line, "Load check: ", memory + registers, " differ (log)"), COLOR_BAD);
+    if (!differ)
+        drawStatus2("Run: same as the reference", COLOR_GOOD);
+    else
+        drawStatus2(textNumber(line, "Run: ", differ, " parts differ (log)"), COLOR_BAD);
 }
 
 u32 rtsMain(void* block)
@@ -314,7 +385,7 @@ u32 rtsMain(void* block)
     fillRect(0, 0, SCREEN_W, 22, COLOR_TITLE_BG);
     drawText(8, 3, "Pico Loader RTS", COLOR_TEXT, COLOR_TITLE_BG);
     drawGameLine((const u8*)block + HEADER_FROM_BLOCK);
-    drawText(8, SCREEN_H - 20, "A: choose  B: back to the game", COLOR_DIM, COLOR_BG);
+    drawText(8, SCREEN_H - 16, "A: choose  B: back to the game", COLOR_DIM, COLOR_BG);
 
     sItemCount = 0;
     sItems[sItemCount++] = ITEM_RESUME;
@@ -322,6 +393,11 @@ u32 rtsMain(void* block)
     {
         sItems[sItemCount++] = ITEM_SAVE;
         sItems[sItemCount++] = ITEM_LOAD;
+        if (rts->testSlotSector[0] && rts->testSlotSector[1] && rts->logSector)
+        {
+            sItems[sItemCount++] = ITEM_TEST_SAVE;
+            sItems[sItemCount++] = ITEM_TEST_LOAD;
+        }
     }
     sItems[sItemCount++] = ITEM_EXIT;
     if (rts->stateSector == 0)
@@ -329,6 +405,20 @@ u32 rtsMain(void* block)
 
     int selected = 0;
     drawItems(selected);
+
+    // a test run: its own freeze once the frames are counted down, or the
+    // combo before that, which spoils it
+    u32 testMode = rts->testMode;
+    rts->testMode = 0;
+    if (testMode && rts->testFrames == 0)
+    {
+        testFreeze(block, testMode);
+    }
+    else if (testMode)
+    {
+        rts->testFrames = 0;
+        drawStatus("Test stopped: menu opened early", COLOR_BAD);
+    }
 
     // the combo is still held
     waitRelease();
@@ -349,19 +439,37 @@ u32 rtsMain(void* block)
                 case ITEM_RESUME: answer = RTS_MENU_STATE_RESUME; break;
                 case ITEM_EXIT: answer = RTS_MENU_STATE_EXIT; break;
                 case ITEM_SAVE: waitRelease(); saveState(block); break;
+                case ITEM_TEST_SAVE:
+                    waitRelease();
+                    if (saveState(block))
+                    {
+                        rts->testMode = TEST_REFERENCE;
+                        rts->testFrames = TEST_FRAMES;
+                        answer = RTS_MENU_STATE_RESUME;
+                    }
+                    break;
                 case ITEM_LOAD:
+                case ITEM_TEST_LOAD:
                 {
+                    int test = sItems[selected] == ITEM_TEST_LOAD;
                     waitRelease();
                     int broken;
-                    if (loadState(block, &broken))
+                    if (loadState(block, &broken, test))
+                    {
+                        if (test)
+                        {
+                            rts->testMode = TEST_COMPARE;
+                            rts->testFrames = TEST_FRAMES;
+                        }
                         answer = RTS_MENU_STATE_RESUME;
+                    }
                     else if (broken)
                     {
                         // the game's memory is half one state, half the other
                         sItemCount = 0;
                         sItems[sItemCount++] = ITEM_EXIT;
                         selected = 0;
-                        fillRect(0, ITEMS_Y - 2, SCREEN_W, 4 * 20, COLOR_BG);
+                        fillRect(0, ITEMS_Y - 1, SCREEN_W, 6 * ITEM_STEP, COLOR_BG);
                     }
                     break;
                 }

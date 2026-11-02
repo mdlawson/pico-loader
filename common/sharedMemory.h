@@ -132,11 +132,14 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 #define RTS_MENU_STATE_ARM7_LOAD    0x444C3741 // 'A7LD'
 #define RTS_MENU_STATE_FIFO_QUERY   0x51463741 // 'A7FQ': the arm7's kept fifo words to cmdAddress
 #define RTS_MENU_STATE_FIFO_SEND    0x53463741 // 'A7FS': cmdSectorCount words to the arm9's fifo
+#define RTS_MENU_STATE_ARM7_COPY    0x50433741 // 'A7CP': cmdSectorCount bytes from cmdSector (an address) to cmdAddress
 #define RTS_MENU_STATE_FAIL         0x4C494146 // 'FAIL'
 
 // Save states: one contiguous file per game and slot, made by the loader at boot.
 #define RTS_STATE_DIRECTORY         "/_pico/states"
 #define RTS_STATE_SIZE              0x500000 // layout in rtsmenu/state.h
+#define RTS_LOG_PATH                "/_pico/rtslog.txt" // the restore test's report, text
+#define RTS_LOG_SIZE                0x4000
 
 /// @brief Where the arm7 finds the stash file and the menu on the sd card.
 ///        Both are single contiguous runs of sectors, checked by the loader at boot.
@@ -156,9 +159,14 @@ struct rts_info_t
     u32 cmdSectorCount; // block + 0x13C
     u32 arm7PatchStart; // the arm7 patch space, in arm7 wram or main memory (block + 0x140)
     u32 arm7PatchSize;  // block + 0x144
+    u32 testFrames;     // block + 0x148: the arm7 counts it down on vblanks and freezes at 0
+    u32 testMode;       // the menu's own: what the test freeze is for
+    u32 testSlotSector[2]; // slots 2 and 3, the test's snapshots; 0 when missing
+    u32 logSector;      // RTS_LOG_PATH, 0 when missing
+    u32 logSectorCount;
 };
 
-static_assert(sizeof(rts_info_t) == 0x38);
+static_assert(sizeof(rts_info_t) == 0x50);
 // the arm7 stub stores the menu's exit answer as the exit request as it is
 static_assert(RTS_MENU_STATE_EXIT == EXIT_REQUEST_REQUEST_MAGIC);
 
@@ -190,7 +198,8 @@ struct exit_request_block_t
     rts_info_t rts;
 };
 
-static_assert(sizeof(exit_request_block_t) == 0x148);
+static_assert(sizeof(exit_request_block_t) == 0x160);
+static_assert(offsetof(exit_request_block_t, rts.testFrames) == 0x148);
 static_assert(offsetof(exit_request_block_t, rts.cmdSector) == 0x134);
 static_assert(offsetof(exit_request_block_t, rts.cmdSectorCount) == 0x13C);
 static_assert(offsetof(exit_request_block_t, rts) == 0x110);

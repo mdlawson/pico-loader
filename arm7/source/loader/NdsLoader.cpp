@@ -942,6 +942,49 @@ void NdsLoader::SetupRealTimeSave(rts_info_t& rts)
 // The save state file of slot 1 for this game, once the rts is on: made as one
 // run of clusters like the stash. The game code names it; anything that is not
 // a letter or digit becomes '_'. A soft reset keeps what the first boot found.
+// Opens or makes path as one contiguous run of size bytes and returns its first
+// sector, or 0. A new or broken file gets its first sector set to fill (0 for a
+// state file: leftovers never pass for a state).
+static u32 makeContiguousFile(const char* path, u32 size, u8 fill)
+{
+    u32 sector = 0;
+    auto file = std::make_unique<FIL>();
+    if (f_open(file.get(), path, FA_OPEN_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
+    {
+        return 0;
+    }
+    if (f_size(file.get()) == size)
+    {
+        sector = getContiguousFileSector(file.get());
+    }
+    if (sector == 0 &&
+        f_lseek(file.get(), 0) == FR_OK &&
+        f_truncate(file.get()) == FR_OK &&
+        f_expand(file.get(), size, 1) == FR_OK &&
+        f_sync(file.get()) == FR_OK)
+    {
+        sector = getContiguousFileSector(file.get());
+        // a small file (the log) is filled whole, a big one only its first sector
+        u8* first = new u8[512];
+        memset(first, fill, 512);
+        if (f_lseek(file.get(), 0) != FR_OK)
+        {
+            sector = 0;
+        }
+        for (u32 offset = 0; sector && offset < (size <= 0x4000 ? size : 512); offset += 512)
+        {
+            UINT bytesWritten = 0;
+            if (f_write(file.get(), first, 512, &bytesWritten) != FR_OK || bytesWritten != 512)
+            {
+                sector = 0;
+            }
+        }
+        delete[] first;
+    }
+    f_close(file.get());
+    return sector;
+}
+
 void NdsLoader::SetupRtsStateFile()
 {
     auto& rts = TWL_SHARED_MEMORY->exitRequest.rts;
@@ -958,65 +1001,32 @@ void NdsLoader::SetupRtsStateFile()
         code[i] = ok ? c : '_';
     }
     code[4] = 0;
-    mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s-1.rts", code);
 
-    const char* problem = nullptr;
-    u32 sector = 0;
+    char status[256];
     FRESULT dirResult = f_mkdir(RTS_STATE_DIRECTORY);
-    auto file = std::make_unique<FIL>();
     if (dirResult != FR_OK && dirResult != FR_EXIST)
     {
-        problem = "could not make " RTS_STATE_DIRECTORY;
-    }
-    else if (f_open(file.get(), path, FA_OPEN_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
-    {
-        problem = "could not open or create the state file";
+        mini_snprintf(status, sizeof(status), "save state: off for %s: could not make " RTS_STATE_DIRECTORY ".\r\n", code);
     }
     else
     {
-        if (f_size(file.get()) == RTS_STATE_SIZE)
+        // slot 1, then slots 2 and 3 for the restore test (rtsmenu: "Test")
+        u32 sectors[3];
+        for (int slot = 0; slot < 3; slot++)
         {
-            sector = getContiguousFileSector(file.get());
+            mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s-%d.rts", code, slot + 1);
+            sectors[slot] = makeContiguousFile(path, RTS_STATE_SIZE, 0);
         }
-        if (sector == 0)
-        {
-            // a new or broken file: no valid state in it, so nothing is lost
-            if (f_lseek(file.get(), 0) == FR_OK &&
-                f_truncate(file.get()) == FR_OK &&
-                f_expand(file.get(), RTS_STATE_SIZE, 1) == FR_OK &&
-                f_sync(file.get()) == FR_OK)
-            {
-                sector = getContiguousFileSector(file.get());
-                // clear the header sector, so leftovers never pass for a state
-                u8* zero = new u8[512];
-                memset(zero, 0, 512);
-                UINT bytesWritten = 0;
-                if (f_lseek(file.get(), 0) != FR_OK ||
-                    f_write(file.get(), zero, 512, &bytesWritten) != FR_OK || bytesWritten != 512)
-                {
-                    sector = 0;
-                }
-                delete[] zero;
-            }
-            if (sector == 0)
-            {
-                problem = "could not make the state file as one piece (no free run of 5 MB?)";
-            }
-        }
-        f_close(file.get());
-    }
-
-    rts.stateSector = sector;
-    rts.stateSectorCount = sector ? RTS_STATE_SIZE / 512 : 0;
-
-    char status[160];
-    if (problem)
-    {
-        mini_snprintf(status, sizeof(status), "save state: off for %s: %s.\r\n", code, problem);
-    }
-    else
-    {
-        mini_snprintf(status, sizeof(status), "save state: %s at sector %u.\r\n", path, sector);
+        rts.stateSector = sectors[0];
+        rts.stateSectorCount = sectors[0] ? RTS_STATE_SIZE / 512 : 0;
+        rts.testSlotSector[0] = sectors[1];
+        rts.testSlotSector[1] = sectors[2];
+        rts.logSector = makeContiguousFile(RTS_LOG_PATH, RTS_LOG_SIZE, ' ');
+        rts.logSectorCount = rts.logSector ? RTS_LOG_SIZE / 512 : 0;
+        mini_snprintf(status, sizeof(status),
+            "save state: %s slot 1 at sector %u, test slots 2 and 3 at %u and %u, log at %u%s\r\n",
+            code, sectors[0], sectors[1], sectors[2], rts.logSector,
+            sectors[0] ? "." : " (slot 1 missing: no free run of 5 MB?).");
     }
     LOG_DEBUG("Rts: %s", status);
     FIL statusFile;
