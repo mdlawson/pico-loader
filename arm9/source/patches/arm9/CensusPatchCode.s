@@ -98,6 +98,11 @@ patch_census_tick_entry:
     add r3, r12, #V_TICK_SAVE
     stmia r3, {r4-r8}
     mov r8, r12
+    // Keep the rts info pointing here (block + 0x164, the vector is at block
+    // + 0x71C): the loader's own entry has been seen lost by the time a game runs.
+    ldr r0, [r8, #V_VECADDR]
+    sub r0, r0, #0x5C0
+    str r8, [r0, #8]
     ldr r0, [r8, #V_STATE]
     ldr r1, [r8, #V_WANT]
     cmp r0, #1

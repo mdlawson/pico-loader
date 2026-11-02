@@ -246,6 +246,19 @@ u32 censusReport(char* out, u32 size, char* line1, char* line2)
         newline();
         put("arm7's main memory arena (see the loader's log).");
         newline();
+        u32 start = sRts->censusStart;
+        put("rts info: census at ");
+        putHex(start, 8);
+        if (start >= 0x02000000 && start < 0x02400000)
+        {
+            put(", magic there ");
+            putHex(((volatile u32*)start)[V_MAGIC / 4], 8);
+        }
+        put(", arm7 patch space ");
+        putHex(sRts->arm7PatchStart, 8);
+        put(" size ");
+        putHex(sRts->arm7PatchSize, 4);
+        newline();
         return sLen;
     }
     u32 state = V(v, V_STATE);

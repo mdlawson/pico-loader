@@ -114,7 +114,9 @@ void ExitComboArm7Patch::ApplyPatch(PatchContext& patchContext)
         sdWrite,
         _dispatchTail[4], // irq table address literal
         _dispatchTail[5], // irq return address literal
-        _prioReturnOffset
+        _prioReturnOffset,
+        _patchSpaceAddress,
+        _patchSpaceAddress ? ARM7_PATCH_SPACE_SIZE : 0
     );
 
     _dispatchTail[0] = 0xE51FF004; // ldr pc,= address

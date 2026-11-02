@@ -177,9 +177,9 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     LOG_DEBUG("Exit combo enabled\n");
 }
 
-bool ExitComboPatch::InstallCensus(void* space)
+bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
 {
-    if (!_installed || !_censusLiteral || _twlSdk || !space)
+    if (!_installed || !_censusLiteral || _twlSdk || !space || !runAddress)
         return false;
     u32 size = SECTION_SIZE(patch_census);
     if (size > CENSUS_ARRAYS)
@@ -197,10 +197,10 @@ bool ExitComboPatch::InstallCensus(void* space)
     words[CENSUS_V_WANT / 4] = 1;
     words[CENSUS_V_VECADDR / 4] = vector;
     words[CENSUS_V_BSTACK / 4] = vector - 0x10; // the bios's control, spsr, r12, lr
-    words[CENSUS_V_ARRAYS / 4] = (u32)space + CENSUS_ARRAYS;
+    words[CENSUS_V_ARRAYS / 4] = runAddress + CENSUS_ARRAYS;
     words[CENSUS_V_MAGIC / 4] = CENSUS_MAGIC;
-    *_censusLiteral = (u32)space + ((u32)&patch_census_tick_entry - (u32)SECTION_START(patch_census));
-    LOG_DEBUG("Census at 0x%p\n", space);
+    *_censusLiteral = runAddress + ((u32)&patch_census_tick_entry - (u32)SECTION_START(patch_census));
+    LOG_DEBUG("Census at 0x%x, written at 0x%p\n", runAddress, space);
     return true;
 }
 

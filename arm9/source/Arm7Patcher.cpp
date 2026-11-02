@@ -38,7 +38,7 @@ static u32 correctAddress(u32 address, bool runInDSiMode)
 
 void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
     char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed, bool runInDSiMode,
-    bool keepDsiBios, void*& censusSpace) const
+    bool keepDsiBios, void*& censusSpace, u32& censusRunAddress) const
 {
     cheatsPtr = nullptr;
     exitComboArm7Installed = false;
@@ -197,12 +197,16 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         // the arm9 must reach it with its protection unit on, so it has to end
         // below the sdk's no-access region for the arm7 (0x023E0000).
         censusSpace = nullptr;
+        censusRunAddress = 0;
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
         {
             u32 start = (mainMemoryArenaLo + 31) & ~31u;
             if (start >= 0x02000000 && start + CENSUS_SPACE_SIZE <= 0x023E0000)
             {
+                // written through the loader's view of main memory, run at
+                // the game's: the arm9's protection unit only maps the 4 MB
                 censusSpace = (void*)correctAddress(start, romHeader);
+                censusRunAddress = start;
                 mainMemoryArenaLo = start + CENSUS_SPACE_SIZE;
                 LOG_DEBUG("Census space at 0x%p\n", censusSpace);
             }
@@ -210,6 +214,11 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             {
                 LOG_DEBUG("No census space: arm7 main memory arena at 0x%x\n", mainMemoryArenaLo);
             }
+        }
+
+        if (exitComboArm7Patch != nullptr)
+        {
+            exitComboArm7Patch->SetPatchSpace((u32)patchSpaceStart);
         }
 
         arm7ArenaPatch->SetMainMemoryArenaLo((void*)mainMemoryArenaLo);

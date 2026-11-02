@@ -265,6 +265,13 @@ hold:
     stmfd sp!, {r4-r11, lr}
     mov r4, r1 // block, kept across the sd calls
     mov r5, r12 // state words
+    // Say where the patch space is again: the loader's own entry for it has
+    // been seen lost by the time a game runs.
+    ldr r2, patch_exitcombo_arm7_space_address
+    cmp r2, #0
+    strne r2, [r4, #0x140] // rts.arm7PatchStart
+    ldrne r2, patch_exitcombo_arm7_space_size
+    strne r2, [r4, #0x144] // rts.arm7PatchSize
     ldr r3, regIme
     ldr r2, [r3]
     str r2, [r5, #24] // holdSavedIme
@@ -1045,6 +1052,14 @@ patch_exitcombo_arm7_return_address:
 
 .global patch_exitcombo_arm7_prioreturn_offset
 patch_exitcombo_arm7_prioreturn_offset:
+    .word 0
+
+.global patch_exitcombo_arm7_space_address
+patch_exitcombo_arm7_space_address:
+    .word 0
+
+.global patch_exitcombo_arm7_space_size
+patch_exitcombo_arm7_space_size:
     .word 0
 
 .global patch_exitcombo_arm7_sdread_address

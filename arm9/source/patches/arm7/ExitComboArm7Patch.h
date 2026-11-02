@@ -18,6 +18,8 @@ public:
 
     bool HasTarget() const { return _dispatchTail != nullptr; }
     bool IsInstalled() const { return _installed != 0; }
+    /// @brief Where the arm7 patch space is, for the stub to keep in the rts info.
+    void SetPatchSpace(u32 address) { _patchSpaceAddress = address; }
 
 private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.
@@ -26,4 +28,5 @@ private:
     u32 _prioReturnOffset = 0;
     u32 _searched = 0;
     u32 _installed = 0;
+    u32 _patchSpaceAddress = 0;
 };

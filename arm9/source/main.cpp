@@ -174,9 +174,10 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
     char* bannerSavePath = nullptr;
     bool exitComboArm7Installed = false;
     void* censusSpace = nullptr;
+    u32 censusRun = 0;
     void* patchSpace = Arm7Patcher().ApplyPatches(
         sLoaderPlatform, cheatsLength, cheats, bannerSavePath, sExitComboPatch != nullptr, exitComboArm7Installed,
-        sRunInDSiMode, sKeepDsiBios, censusSpace);
+        sRunInDSiMode, sKeepDsiBios, censusSpace, censusRun);
     if (sSoftResetCheatsPointer != nullptr)
     {
         *sSoftResetCheatsPointer = cheats;
@@ -192,9 +193,9 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
         dc_drainWriteBuffer();
     }
     u32 census = 0;
-    if (sExitComboPatch != nullptr && exitComboArm7Installed && sExitComboPatch->InstallCensus(censusSpace))
+    if (sExitComboPatch != nullptr && exitComboArm7Installed && sExitComboPatch->InstallCensus(censusSpace, censusRun))
     {
-        census = (u32)censusSpace;
+        census = censusRun;
         dc_flushAll();
         dc_drainWriteBuffer();
         ic_invalidateAll();
