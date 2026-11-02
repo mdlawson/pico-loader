@@ -278,6 +278,7 @@ static u32 timeOnlyBits(u32 section, u32 o)
     {
         if (o == ARM7_CTX_IF) return 0xFFFFFFFF;
         if (o >= ARM7_CTX_TIMERS && o < ARM7_CTX_TIMERS + 16) return 0x0000FFFF;
+        if (o == ARM7_CTX_DISPSTAT_IPCSYNC) return 0x00000007; // the arm7's display status flags
     }
     return 0;
 }
