@@ -197,7 +197,8 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         // from the start of the arm7's main memory arena. That arena is usually
         // in the arm7's own corner (0x027E0000 and up, below the shared page);
         // the arm9 runs the census through the 4 MB view of the same memory,
-        // and the hook opens the sdk's region 2 there for it.
+        // where the census gate turns the sdk's region 2 guard into the dsi
+        // bios's exception stack page, leaving that corner to region 1.
         censusSpace = nullptr;
         censusRunAddress = 0;
 #ifdef RTS_CENSUS

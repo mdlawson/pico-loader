@@ -205,26 +205,36 @@ patch_exitcombo_teardown_bootloaderbinaries_address:
 
 
 // ---------------------------------------------------------------- census gate
-// Optional, its own piece: the hook calls it with lr = back into the hook. The
-// census lives in the arm7's corner of main memory, so first give the arm9 the
-// sdk's no-access region there (region 2, 0x023E0000) for data and code, and
-// that region's instruction cache (only the census's code runs there; its data
-// stays uncached, the menu's sd buffer shares the region). Then on into the
+// Optional, its own piece: the hook calls it with lr = back into the hook, r2 and
+// r3 free. Every trap the census takes goes through the bios's exception handler,
+// which pushes onto its own stack with the protection unit still on. The ds bios
+// keeps that stack at 027FFD9Ch, inside the sdk's shared page region; the dsi bios,
+// which a DSi keeps for the exit combo, at 02FFFD9Ch, which no region of a ds game
+// covers: the first trap would abort again on that push, for good. So region 2
+// becomes that page, read-write and not cached (the same memory as 023FF000h in
+// 4 MB mode). Region 2 is the sdk's no-access guard over the arm7's corner of main
+// memory; without it that corner is plain main memory (region 1), which also lets
+// the census run there when the arm7's arena put it there. Then on into the
 // census, which returns to the hook.
 .section "patch_census_gate", "ax"
 .global patch_census_gate_entry
 .type patch_census_gate_entry, %function
 patch_census_gate_entry:
-    mrc p15, 0, r2, c5, c0, 2
+    ldr r3, gateStackRegion
+    mcr p15, 0, r3, c6, c2, 0
+    mrc p15, 0, r2, c5, c0, 2 // data: full access
+    bic r2, r2, #0xF00
     orr r2, r2, #0x300
     mcr p15, 0, r2, c5, c0, 2
-    mrc p15, 0, r2, c5, c0, 3
-    orr r2, r2, #0x300
-    mcr p15, 0, r2, c5, c0, 3
-    mrc p15, 0, r2, c2, c0, 1
-    orr r2, r2, #4
-    mcr p15, 0, r2, c2, c0, 1
+    mrc p15, 0, r2, c2, c0, 0 // not cached
+    bic r2, r2, #4
+    mcr p15, 0, r2, c2, c0, 0
+    mrc p15, 0, r2, c3, c0, 0 // not buffered
+    bic r2, r2, #4
+    mcr p15, 0, r2, c3, c0, 0
     ldr pc, patch_census_gate_target
+gateStackRegion:
+    .word 0x02FFF017 // base 02FFF000h, 4 KB, enabled
 .global patch_census_gate_target
 patch_census_gate_target:
     .word 0
