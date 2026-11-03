@@ -3,6 +3,8 @@
 
 int censusPresent(void);
 int censusWanted(void);
+/// @brief 0 off, 1 trapping, 2 no region it can use, 3 stopped (the report says why).
+int censusState(void);
 // Traps off while the menu runs, back on as it resumes the game.
 void censusPause(void);
 void censusResume(void);

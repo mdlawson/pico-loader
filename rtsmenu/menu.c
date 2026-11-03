@@ -208,7 +208,11 @@ static void drawItems(int selected)
         fillRect(8, y - 1, SCREEN_W - 16, ITEM_STEP, paper);
         const char* label = sLabels[sItems[i]];
         if (sItems[i] == ITEM_CENSUS)
-            label = !censusPresent() ? "Census: not in this boot" : censusWanted() ? "Census: traps on" : "Census: traps off";
+            label = !censusPresent() ? "Census: not in this boot"
+                : !censusWanted() ? "Census: traps off"
+                : censusState() == 3 ? "Census: stopped (A: why)"
+                : censusState() == 2 ? "Census: no mpu region"
+                : "Census: traps on";
         drawText(16, y, label, ink, paper);
     }
 }

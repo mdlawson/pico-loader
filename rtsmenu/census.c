@@ -76,6 +76,12 @@ int censusWanted(void)
     return v && V(v, V_WANT);
 }
 
+int censusState(void)
+{
+    volatile u32* v = vars();
+    return v ? (int)V(v, V_STATE) : 0;
+}
+
 void censusPause(void)
 {
     volatile u32* v = vars();
