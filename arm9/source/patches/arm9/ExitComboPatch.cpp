@@ -74,7 +74,10 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     auto& patchCodes = patchContext.GetPatchCodeCollection();
     bool emitRebootCode = !_osResetSystemPatch->HasTarget();
     if (emitRebootCode && !patchContext.GetLoaderPlatform()->HasSdReadPatchCode(patchCodes))
+    {
+        LOG_DEBUG("No sd read code for the reboot code, no exit combo\n");
         return;
+    }
 
     // Everything this patch takes from the patch heap, in the order it is taken
     // below. It only gets what the mandatory patches left, and all of it or
