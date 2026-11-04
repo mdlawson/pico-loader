@@ -20,6 +20,10 @@ public:
     bool IsInstalled() const { return _installed != 0; }
     /// @brief Where the arm7 patch space is, for the stub to keep in the rts info.
     void SetPatchSpace(u32 address) { _patchSpaceAddress = address; }
+    /// @brief Where the arm7's register shadow is (ShadowInstall7), for a load to
+    ///        start the state's sound channels again from; 0 for none. Also
+    ///        after ApplyPatch.
+    void SetShadow7(u32 address);
 
 private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.
@@ -29,4 +33,6 @@ private:
     u32 _searched = 0;
     u32 _installed = 0;
     u32 _patchSpaceAddress = 0;
+    u32 _shadow7Address = 0;
+    u32* _shadow7Literal = nullptr; // in the installed code
 };

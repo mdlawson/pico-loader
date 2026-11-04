@@ -699,6 +699,8 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
     }
 }
 
+static inline bool al4(u32 w) { return (w >> 28) == 0xE; }
+
 void Scanner::Scan(u32 first, u32 count)
 {
     for (u32 bi = first; bi < first + count && bi < _blockCount; bi++)
@@ -728,6 +730,14 @@ void Scanner::Scan(u32 first, u32 count)
                 v = 0x04000000;
                 start = true;
             }
+            bool unknownPlus = false;
+            if (!start && gTargetArm7 && al4(w) && ((w & 0x0FE00FFF) == 0x02800301 || (w & 0x0FE00FFF) == 0x03800301)
+                && ((w >> 16) & 0xF) < 13)
+            {
+                // add/orr rd, rn, #0x04000000: a channel's base, rn = ch << 4
+                v = 0x04000000;
+                start = unknownPlus = true;
+            }
             if (!start)
                 continue;
             Regs r;
@@ -749,7 +759,7 @@ void Scanner::Scan(u32 first, u32 count)
                     r.val[xd] = xv;
                 }
             }
-            r.kind[rd] = IO;
+            r.kind[rd] = unknownPlus ? IOX : IO;
             r.val[rd] = v;
             // conditional loads still give the register on the taken path
             Trace(b.runAddress + off + 4, r, 0);

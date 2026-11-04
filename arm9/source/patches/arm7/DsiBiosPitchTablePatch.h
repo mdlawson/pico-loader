@@ -1,5 +1,10 @@
 #pragma once
 #include "../Patch.h"
+#include "moduleParams.h"
+#include "ndsHeader.h"
+
+/// @brief The arm7's module params (through crt0's literal, else the magic), or null.
+const module_params_ntr_t* findArm7ModuleParams(const nds_header_ntr_t* romHeader);
 
 /// @brief Arm7 patch for games that run on the bios of the DSi, whose
 ///        GetPitchTable reads the wrong table. Every call to the sdk thunk is

@@ -22,6 +22,7 @@
 #include "patches/DsiBiosLz77SwiPatch.h"
 #include "Arm7Patcher.h"
 #include "shadow/ShadowInstall.h"
+#include "shadow/ShadowInstall7.h"
 
 static u32 correctAddress(u32 address, bool runInDSiMode)
 {
@@ -205,13 +206,22 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
 #ifdef RTS_CENSUS
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
 #else
-        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && ShadowInstall::SpaceNeeded() != 0)
+        u32 shadow7Size = 0, shadow7Run = 0;
+        void* shadow7Space = nullptr;
+        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
+        {
+            ShadowInstall7::Collect(romHeader);
+            shadow7Size = (ShadowInstall7::SpaceNeeded() + 31) & ~31u;
+        }
+        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && ShadowInstall::SpaceNeeded() + shadow7Size != 0)
         {
             // the trap-free shadow, from the same place; the arm9 reaches it once
             // its install switches off the sdk's region 2
             u32 start = (mainMemoryArenaLo + 31) & ~31u;
             u32 offset = start & 0x3FFFFF;
-            u32 want = (ShadowInstall::SpaceNeeded() + 31) & ~31u;
+            // the arm7's shadow at the end, small and taken first; the arm9's
+            // from the start, where the menu looks for it
+            u32 want = ((ShadowInstall::SpaceNeeded() + 31) & ~31u) + shadow7Size;
             // up to the census's small size always (pokemon's arena took that), more
             // only with the census's spare left to the arm7
             u32 room = offset + CENSUS_ARM7_SPARE <= 0x3FF000 ? (0x3FF000 - CENSUS_ARM7_SPARE - offset) & ~31u : 0;
@@ -224,6 +234,15 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
                 censusRunAddress = 0x02000000 + offset;
                 mainMemoryArenaLo = start + censusSize;
                 LOG_DEBUG("Shadow space at 0x%x, 0x%x bytes\n", censusRunAddress, censusSize);
+                if (shadow7Size && shadow7Size <= censusSize)
+                {
+                    censusSize -= shadow7Size;
+                    shadow7Space = (u8*)censusSpace + censusSize;
+                    shadow7Run = censusRunAddress + censusSize;
+                    exitComboArm7Patch->SetShadow7(shadow7Run);
+                }
+                if (censusSize == 0)
+                    censusSpace = nullptr;
             }
         }
         if (false)
@@ -278,6 +297,12 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         {
             ErrorDisplay().PrintError("Failed to apply arm7 patches.");
         }
+#ifndef RTS_CENSUS
+        // the arm7's stubs, once its own patches are in (a site they took is left out)
+        if (shadow7Space && exitComboArm7Patch->IsInstalled()
+            && !ShadowInstall7::Install(shadow7Space, shadow7Run, shadow7Size))
+            exitComboArm7Patch->SetShadow7(0);
+#endif
         dc_flushAll();
         dc_drainWriteBuffer();
         ic_invalidateAll();

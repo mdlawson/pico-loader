@@ -47,7 +47,7 @@ static bool isPlausibleModuleParams(const nds_header_ntr_t* romHeader, const mod
 // The sdk crt0 fetches the module params through a literal near the entry:
 // ldr r0, [pc, #n]; ldr r1, [r0]; ldr r2, [r0, #4]; ldr r3, [r0, #8]. The
 // early sdks put no magic words after the params, so this comes first.
-static const module_params_ntr_t* findArm7ModuleParams(const nds_header_ntr_t* romHeader)
+const module_params_ntr_t* findArm7ModuleParams(const nds_header_ntr_t* romHeader)
 {
     u32 start = romHeader->arm7LoadAddress;
     u32 end = start + romHeader->arm7Size;

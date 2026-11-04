@@ -198,7 +198,7 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
 #ifdef RTS_CENSUS
     if (sExitComboPatch != nullptr && exitComboArm7Installed && sExitComboPatch->InstallCensus(censusSpace, censusRun, censusSize))
 #else
-    if (sExitComboPatch != nullptr && exitComboArm7Installed && ShadowInstall::Install(censusSpace, censusRun, censusSize))
+    if (sExitComboPatch != nullptr && exitComboArm7Installed && censusSpace && ShadowInstall::Install(censusSpace, censusRun, censusSize))
 #endif
     {
         census = censusRun;

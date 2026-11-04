@@ -116,8 +116,10 @@ void ExitComboArm7Patch::ApplyPatch(PatchContext& patchContext)
         _dispatchTail[5], // irq return address literal
         _prioReturnOffset,
         _patchSpaceAddress,
-        _patchSpaceAddress ? ARM7_PATCH_SPACE_SIZE : 0
+        _patchSpaceAddress ? ARM7_PATCH_SPACE_SIZE : 0,
+        _shadow7Address
     );
+    _shadow7Literal = exitComboPatchCode->GetShadow7Literal();
 
     _dispatchTail[0] = 0xE51FF004; // ldr pc,= address
     _dispatchTail[1] = (u32)exitComboPatchCode->GetExitComboFunction();
@@ -147,4 +149,11 @@ void ExitComboArm7Patch::ApplyPatch(PatchContext& patchContext)
     }
 
     LOG_DEBUG("Arm7 exit combo enabled\n");
+}
+
+void ExitComboArm7Patch::SetShadow7(u32 address)
+{
+    _shadow7Address = address;
+    if (_shadow7Literal)
+        *_shadow7Literal = address;
 }

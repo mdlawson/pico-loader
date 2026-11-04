@@ -583,12 +583,18 @@ arm7Load:
     bne 6b
     add r2, r3, #0x400
     mov r6, #16
+    mov r8, #0
 7:
     ldr r12, [r1], #4
+    mov r8, r8, lsr #1
+    tst r12, #0x80000000
+    orrne r8, r8, #0x8000 // channel 15 - (r6 - 1) ends up at its own bit
     bic r12, r12, #0x80000000
     str r12, [r2], #0x10
     subs r6, r6, #1
     bne 7b
+    orr r8, r8, #0x10000 // loaded: holdEnd starts them again from the shadow
+    str r8, [r5, #140] // restartMask
     add r2, r5, #36 // holdStash, put back over the wait loop at the end
     mov r6, #9
 8:
@@ -748,7 +754,10 @@ timedHold:
     mov r12, r5
 
 holdEnd:
-    // r1 = block, r12 = state words
+    // r1 = block, r12 = state words; r4-r11 are free until the ldmfd below
+    ldr r0, [r12, #140] // restartMask, set by a load
+    cmp r0, #0
+    blne soundRestart
     ldr r3, regSoundCnt
     ldr r2, [r12, #28] // holdSavedSoundCnt
     strh r2, [r3]
@@ -773,6 +782,91 @@ holdEnd:
     ldmfd sp!, {r4-r11, lr}
     mov r0, #0 // the vblank index
     b dispatch
+
+// After a load: the state's sound from the arm7's register shadow (the loaded
+// main memory has the state's), r0 = restartMask: bits 0-15 the channels the
+// state had playing, bit 16 always. The timer reloads and the capture
+// registers go back, then each of those channels gets its sample address,
+// timer, loop start and length and starts again, from the top of its sample:
+// where it was isn't kept anywhere. Uses r0, r2-r10; keeps r1, r12.
+soundRestart:
+    mov r2, #0
+    str r2, [r12, #140]
+    ldr r2, patch_exitcombo_arm7_shadow7_address
+    cmp r2, #0
+    bxeq lr
+    ldr r3, [r2] // 'SHD7': the state came from a session with the shadow here
+    ldr r4, shadow7Magic
+    cmp r3, r4
+    bxne lr
+    add r4, r2, #0x110 // the timers' data
+    add r5, r2, #0x230 // and flags
+    mov r6, #0x04000000
+    add r6, r6, #0x100
+    mov r7, #4
+1:
+    ldrb r8, [r5], #4
+    cmp r8, #0
+    ldrhne r8, [r4]
+    strhne r8, [r6] // TMxCNT_L: the reload, the count goes on
+    add r4, r4, #4
+    add r6, r6, #4
+    subs r7, r7, #1
+    bne 1b
+    // capture: r4 = data + 0x110, r5 = flags + 0x110
+    mov r6, #0x04000000
+    add r6, r6, #0x500
+    ldrb r8, [r5]
+    cmp r8, #0
+    beq 2f
+    ldr r8, [r4]
+    str r8, [r6, #0x10] // SNDCAP0DAD
+    ldrh r8, [r4, #4]
+    strh r8, [r6, #0x14] // SNDCAP0LEN
+    ldr r8, [r4, #8]
+    str r8, [r6, #0x18] // SNDCAP1DAD
+    ldrh r8, [r4, #12]
+    strh r8, [r6, #0x1C] // SNDCAP1LEN
+    ldrh r8, [r6, #8] // SNDCAP0CNT/1CNT, as the load set them: start them over
+    bic r9, r8, #0x8000
+    bic r9, r9, #0x0080
+    cmp r9, r8
+    strhne r9, [r6, #8]
+    strhne r8, [r6, #8]
+2:
+    add r4, r2, #0x10 // channel 0's data
+    add r5, r2, #0x130 // and flags
+    sub r6, r6, #0x100 // SOUND0CNT
+3:
+    tst r0, #1
+    beq 4f
+    ldrb r8, [r5, #4]
+    cmp r8, #0
+    ldrne r8, [r4, #4]
+    strne r8, [r6, #4] // SAD
+    ldrb r8, [r5, #8]
+    cmp r8, #0
+    ldrhne r8, [r4, #8]
+    strhne r8, [r6, #8] // TMR
+    ldrb r8, [r5, #10]
+    cmp r8, #0
+    ldrhne r8, [r4, #10]
+    strhne r8, [r6, #10] // PNT
+    ldrb r8, [r5, #12]
+    cmp r8, #0
+    ldrne r8, [r4, #12]
+    strne r8, [r6, #12] // LEN
+    ldr r8, [r6]
+    orr r8, r8, #0x80000000
+    str r8, [r6] // and on
+4:
+    add r4, r4, #16
+    add r5, r5, #16
+    add r6, r6, #16
+    mov r0, r0, lsr #1
+    cmp r0, #1 // bit 16 left: the channels are done
+    bhi 3b
+    bx lr
 
 // Keeps the nine game words at parkWaitAddress and puts the nine word wait
 // loop at r1 there instead. Returns r0 = parkWaitAddress. Uses r2, r3, r12.
@@ -1037,6 +1131,16 @@ fifoCount: // + 72
 
 fifoWords: // + 76, sixteen words
     .space 64
+
+restartMask: // + 140: a load's channels to start again (soundRestart)
+    .word 0
+
+shadow7Magic:
+    .word 0x37444853 // 'SHD7'
+
+.global patch_exitcombo_arm7_shadow7_address
+patch_exitcombo_arm7_shadow7_address:
+    .word 0
 
 .global patch_exitcombo_arm7_block_address
 patch_exitcombo_arm7_block_address:
