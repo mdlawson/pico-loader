@@ -40,7 +40,7 @@ public:
 
 private:
     const u32* FindMIiUncompressBackward(u32 arm9LoadAddress, SdkVersion sdkVersion) const;
-    void AddGamePatches(PatchCollection& patchCollection, u32 gameCode, const ApListEntry* apListEntry) const;
+    void AddGamePatches(PatchCollection& patchCollection, u32 gameCode, const ApListEntry* apListEntry, bool shadowOverlays) const;
     void AddDSProtectPatches(PatchCollection& patchCollection,
         OverlayHookPatch* overlayHookPatch, const ApListEntry* apListEntry) const;
     void AddGameSpecificPatches(PatchCollection& patchCollection,

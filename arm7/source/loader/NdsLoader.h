@@ -72,6 +72,7 @@ private:
     bool IsValidDSiRom();
     bool CanLoadArm9iAndArm7i();
     void ApplyArm7Patches();
+    void ShadowScanOverlays();
     void PreprocessCheats();
     void SetupSharedMemory(u32 cardId, u32 agbMem, u32 resetParam, u32 romOffset, u32 bootType);
     void LoadFirmwareUserSettings();

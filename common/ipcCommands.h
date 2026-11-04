@@ -16,3 +16,5 @@
 #define IPC_COMMAND_ARM9_RESTORE_TWL_MODE           0x11
 #define IPC_COMMAND_ARM9_GET_BUILT_IN_DLDI_DRIVER   0x12
 #define IPC_COMMAND_ARM9_GET_BUILT_IN_DLDI_HEADER   0x13
+#define IPC_COMMAND_ARM9_SHADOW_OVERLAYS            0x14 // the rts register shadow: does it want the overlays?
+#define IPC_COMMAND_ARM9_SHADOW_OVERLAY             0x15 // one overlay, read into place: table entry, file size

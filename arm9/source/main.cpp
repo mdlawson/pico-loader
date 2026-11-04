@@ -202,6 +202,10 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
 #endif
     {
         census = censusRun;
+#ifndef RTS_CENSUS
+        if (ShadowInstall::VblankRoutine())
+            sExitComboPatch->SetVblankCall(ShadowInstall::VblankRoutine());
+#endif
         dc_flushAll();
         dc_drainWriteBuffer();
         ic_invalidateAll();
@@ -411,6 +415,29 @@ static void handleArm7Command(u32 command)
         {
             u32 cheatsLength = receiveFromArm7();
             handleApplyArm7PatchesCommand(cheatsLength);
+            break;
+        }
+        case IPC_COMMAND_ARM9_SHADOW_OVERLAYS:
+        {
+#ifdef RTS_CENSUS
+            ipc_sendWordDirect(0);
+#else
+            ipc_sendWordDirect(ShadowInstall::WantsOverlays() ? 1 : 0);
+#endif
+            break;
+        }
+        case IPC_COMMAND_ARM9_SHADOW_OVERLAY:
+        {
+            u32 entry[8];
+            for (int i = 0; i < 8; i++)
+                entry[i] = receiveFromArm7();
+            u32 fileSize = receiveFromArm7();
+#ifndef RTS_CENSUS
+            ShadowInstall::ScanOverlay(entry, fileSize);
+#else
+            (void)fileSize;
+#endif
+            ipc_sendWordDirect(1);
             break;
         }
         case IPC_COMMAND_ARM9_SET_AP_INFO:

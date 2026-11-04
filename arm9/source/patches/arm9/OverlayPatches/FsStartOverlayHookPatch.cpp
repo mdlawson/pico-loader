@@ -76,7 +76,7 @@ bool FsStartOverlayHookPatch::FindPatchTarget(PatchContext& patchContext)
         LOG_WARNING("FS_StartOverlay not found\n");
     }
 
-    return _fsStartOverlay != nullptr;
+    return _fsStartOverlay != nullptr || !_required;
 }
 
 void FsStartOverlayHookPatch::ApplyPatch(PatchContext& patchContext)

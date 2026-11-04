@@ -28,6 +28,13 @@ public:
     ///        vblank. Only with the hook in, and not for twl sdk games.
     bool InstallCensus(void* space, u32 runAddress, u32 spaceSize);
 
+    /// @brief Has the vblank hook call address (keeping r4-r11), in its census slot.
+    void SetVblankCall(u32 address)
+    {
+        if (_installed && _censusLiteral)
+            *_censusLiteral = address;
+    }
+
 private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.
     OSResetSystemPatch* _osResetSystemPatch;

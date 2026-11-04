@@ -10,6 +10,15 @@ public:
     /// @param patch The overlay pach to add.
     void AddOverlayPatch(OverlayPatch* patch)
     {
+        _required = true;
+        AddOptionalOverlayPatch(patch);
+    }
+
+    /// @brief Adds an overlay patch the game boots fine without: when the hook
+    ///        can't go in, only it is left out.
+    /// @param patch The overlay pach to add.
+    void AddOptionalOverlayPatch(OverlayPatch* patch)
+    {
         LOG_DEBUG("OverlayHookPatch::AddOverlayPatch\n");
         if (!_patchHead)
             _patchHead = patch;
@@ -21,4 +30,5 @@ public:
 protected:
     OverlayPatch* _patchHead = nullptr;
     OverlayPatch* _patchTail = nullptr;
+    bool _required = false;
 };

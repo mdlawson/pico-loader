@@ -338,6 +338,9 @@ void NdsLoader::Load(BootMode bootMode)
 
         LOG_DEBUG("Arm9 patches done\n");
 
+        if (bootMode != BootMode::Multiboot && !_runInDSiMode)
+            ShadowScanOverlays();
+
         ApplyArm7Patches();
 
         LOG_DEBUG("Arm7 patches done\n");
@@ -638,6 +641,57 @@ void NdsLoader::HandleHomebrewPatching()
             launcherPath[255] = 0;
         }
     }
+}
+
+// The rts's register shadow scans the overlays for the stores it keeps (the arm9
+// patcher, shadow/ShadowInstall.cpp): each one read where it runs, into memory
+// that is still clear, for the arm9 to look at and clear again.
+void NdsLoader::ShadowScanOverlays()
+{
+    sendToArm9(IPC_COMMAND_ARM9_SHADOW_OVERLAYS);
+    if (!receiveFromArm9())
+        return;
+    u32 romOffset = TWL_SHARED_MEMORY->ntrSharedMem.romOffset;
+    u32 count = _romHeader.arm9OverlayTableSize / 32;
+    u32 scanned = 0;
+    for (u32 i = 0; i < count && i < 1024; i++)
+    {
+        u32 entry[8];
+        u32 fat[2];
+        UINT bytesRead = 0;
+        if (f_lseek(&_romFile, romOffset + _romHeader.arm9OverlayTableOffset + i * 32) != FR_OK
+            || f_read(&_romFile, entry, 32, &bytesRead) != FR_OK || bytesRead != 32)
+            break;
+        u32 ram = entry[1], ramSize = entry[2], fileId = entry[6];
+        if (ram < 0x02000000 || ram >= 0x02400000 || ramSize == 0 || ramSize > 0x400000 - (ram - 0x02000000)
+            || (ram & 3) || fileId * 8 + 8 > _romHeader.fatSize)
+            continue;
+        if (f_lseek(&_romFile, romOffset + _romHeader.fatOffset + fileId * 8) != FR_OK
+            || f_read(&_romFile, fat, 8, &bytesRead) != FR_OK || bytesRead != 8)
+            continue;
+        u32 fileSize = fat[1] - fat[0];
+        if (fat[1] < fat[0] || fileSize > ramSize)
+            continue;
+        // only into memory nothing else holds
+        bool clear = true;
+        for (u32 a = ram; a < ram + ramSize && clear; a += 4)
+            clear = *(vu32*)a == 0;
+        if (!clear)
+            continue;
+        if (f_lseek(&_romFile, romOffset + fat[0]) != FR_OK
+            || f_read(&_romFile, (void*)ram, fileSize, &bytesRead) != FR_OK || bytesRead != fileSize)
+        {
+            memset((void*)ram, 0, fileSize);
+            continue;
+        }
+        sendToArm9(IPC_COMMAND_ARM9_SHADOW_OVERLAY);
+        for (int k = 0; k < 8; k++)
+            sendToArm9(entry[k]);
+        sendToArm9(fileSize);
+        receiveFromArm9();
+        scanned++;
+    }
+    LOG_DEBUG("Shadow: %u of %u overlays scanned\n", scanned, count);
 }
 
 void NdsLoader::ApplyArm7Patches()

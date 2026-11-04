@@ -2,6 +2,7 @@
 
 namespace shadow_scan
 {
+u32 gTargetArm7 = 0;
 
 static inline u32 ror(u32 v, u32 r) { r &= 31; return r ? (v >> r) | (v << (32 - r)) : v; }
 
@@ -67,20 +68,27 @@ bool Scanner::InLoop(u32 site, bool thumb) const
 void Scanner::AddSiteAt(u32 site, bool thumb, int depth)
 {
     if (depth > 0 && InLoop(site, thumb))
+    {
+        u32 op = 0;
+        if (depth == 1 && (thumb ? Read16(site, op) : Read32(site, op)))
+            AddCopy(site, thumb, op);
         return;
+    }
     AddSite(site | (thumb ? 1 : 0));
 }
 
-void Scanner::Call(u32 target, bool thumb, const Regs& r, int depth)
+void Scanner::Call(u32 target, bool thumb, const Regs& r, int depth, bool jump)
 {
+    // a call takes its io arguments along, a jump all its registers
+    int carried = jump ? 13 : 4;
     bool args = false;
-    for (int i = 0; i < 4; i++)
-        if (r.kind[i] == IO) args = true;
+    for (int i = 0; i < carried; i++)
+        if (r.kind[i] >= IO) args = true;
     if (!args || depth >= 2 || !BlockOf(target))
         return;
-    u32 key = thumb;
-    for (int i = 0; i < 4; i++)
-        if (r.kind[i] == IO) key = key * 31 + r.val[i] + i;
+    u32 key = thumb | (jump ? 2 : 0);
+    for (int i = 0; i < carried; i++)
+        if (r.kind[i] >= IO) key = key * 31 + r.val[i] + i + r.kind[i] * 7;
     for (u32 i = 0; i < _callKeyN && i < 64; i++)
         if (_callKey[i][0] == target && _callKey[i][1] == key)
             return;
@@ -89,9 +97,86 @@ void Scanner::Call(u32 target, bool thumb, const Regs& r, int depth)
     _callKeyN++;
     Regs c;
     for (int i = 0; i < 16; i++) c.kind[i] = NONE;
-    for (int i = 0; i < 4; i++) { c.kind[i] = r.kind[i]; c.val[i] = r.val[i]; }
+    for (int i = 0; i < carried; i++) { c.kind[i] = r.kind[i]; c.val[i] = r.val[i]; }
+    // a call from the io base's own code: where a copy routine's wrapper goes
+    Context saved = _ctx;
+    if (depth == 0)
+    {
+        _ctx.from = _from;
+        _ctx.link = _link;
+        _ctx.callee = target & ~1u;
+        _ctx.calleeThumb = thumb;
+        _ctx.ioArgs = 0;
+        for (int i = 0; i < 4; i++)
+            if (r.kind[i] >= IO) _ctx.ioArgs |= 1 << i;
+        _ctx.dst = r.val[1];
+    }
+    _link = LINK_NONE;
     if (thumb) TraceThumb(target & ~1u, c, depth + 1);
     else Trace(target, c, depth + 1);
+    _ctx = saved;
+}
+
+// A loop store in a routine called with an io address in r1 alone: the sdk's
+// copies (src r0, dst r1, size r2) and fills (value r0, dst r1, size r2). A
+// copy loads through r0 on the way to its store; a fill doesn't.
+void Scanner::AddCopy(u32 site, bool thumb, u32 op)
+{
+    if (_ctx.link == LINK_NONE || _ctx.ioArgs != 2 || !_copies)
+        return;
+    // a b is a tail call only into what looks like a routine of its own: right
+    // after another's return (else it may be the join of an if)
+    if (_ctx.link == LINK_ARM_JUMP && !_ctx.calleeThumb)
+    {
+        u32 prev;
+        if (!Read32(_ctx.callee - 4, prev) || (prev != 0xE12FFF1E && (prev & 0xFFFF8000) != 0xE8BD8000))
+            return;
+    }
+    bool copy = false;
+    for (u32 a = _ctx.callee; a < site && !copy; a += thumb ? 2 : 4)
+    {
+        u32 x;
+        if (thumb)
+        {
+            if (!Read16(a, x)) break;
+            // ldr/ldrb/ldrh imm, register-offset loads, ldmia: base in bits 5-3 (ldmia 10-8)
+            if (((x >> 11) == 0x0D || (x >> 11) == 0x0F || (x >> 11) == 0x11) && ((x >> 3) & 7) == 0) copy = true;
+            if ((x & 0xF000) == 0x5000 && (x & 0x0E00) >= 0x0600 && ((x >> 3) & 7) == 0) copy = true;
+            if ((x & 0xF800) == 0xC800 && ((x >> 8) & 7) == 0) copy = true;
+        }
+        else
+        {
+            if (!Read32(a, x)) break;
+            u32 xn = (x >> 16) & 0xF;
+            bool load = x & (1 << 20);
+            u32 t = (x >> 25) & 7;
+            if (load && xn == 0 && (t == 2 || t == 3 || t == 4 || (t == 0 && (x & 0x90) == 0x90 && (x & 0x60))))
+                copy = true;
+        }
+    }
+    uint8_t kind;
+    if (copy)
+        kind = COPY;
+    else if (thumb)
+        kind = (op >> 11) == 0x0E || (op >> 9) == 0x2A ? FILL8 : (op >> 11) == 0x10 || (op >> 9) == 0x29 ? FILL16 : FILL32;
+    else if ((op & 0x0E000000) == 0 && (op & 0x90) == 0x90)
+        kind = FILL16;
+    else
+        kind = (op & 0x0C400000) == 0x04400000 ? FILL8 : FILL32;
+    u32 at = _ctx.from | (_ctx.link == LINK_THUMB_CALL ? 1 : 0);
+    for (u32 i = 0; i < _copyCount; i++)
+        if (_copies[i].at == at)
+            return;
+    if (_copyCount >= _maxCopies)
+    {
+        _overflow++;
+        return;
+    }
+    CopySite& c = _copies[_copyCount++];
+    c.at = at;
+    c.callee = _ctx.callee | (_ctx.calleeThumb ? 1 : 0);
+    c.link = _ctx.link;
+    c.kind = kind;
 }
 
 void Scanner::AddSite(u32 site)
@@ -107,13 +192,22 @@ void Scanner::AddSite(u32 site)
 
 bool Scanner::AnyIo(const Regs& r) const
 {
-    for (int i = 0; i < 13; i++)
-        if (r.kind[i] == IO)
+    for (int i = 0; i < 15; i++)
+        if (i != 13 && r.kind[i] >= IO)
             return true;
     return false;
 }
 
 static inline bool isIo(u32 v) { return v >= 0x04000000 && v < 0x04002000; }
+// a base with an unknown offset added that still most likely lands on a shadowed
+// register: the sdk's setters get &REG_BG2PA + 0x10 * n and the like
+static inline bool nearShadow(u32 v)
+{
+    u32 o = v - 0x04000000;
+    if (shadow_scan::gTargetArm7)
+        return o == 0 || (o >= 0x100 && o < 0x110) || (o >= 0x400 && o < 0x520); // + ch * 16 and the like
+    return (o >= 0x10 && o < 0x58) || (o >= 0x1010 && o < 0x1058) || (o >= 0x330 && o < 0x3C0);
+}
 
 // does a store of size bytes at a touch a shadowed register?
 static bool touches(u32 a, u32 size)
@@ -124,8 +218,18 @@ static bool touches(u32 a, u32 size)
     return false;
 }
 
+// a store through a base of this kind at a (its known part): a site? An io base
+// plus something unknown is one on the arm9 (the setters' offsets are many);
+// on the arm7 the unknown is a channel's 16 bytes, which keep the register
+static inline bool hit(u32 kind, u32 a, u32 size)
+{
+    return kind == 3 /* IOX */ && !shadow_scan::gTargetArm7 ? true : touches(a, size);
+}
+
 void Scanner::Trace(u32 pc, Regs r, int depth)
 {
+    u32 forks = 0;
+    auto ok = [](u32 x) { return x < 13 || x == 14; }; // lr too: a leaf's spare register
     for (int n = 0; n < 256; n++, pc += 4)
     {
         u32 op;
@@ -138,8 +242,9 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
             // blx imm: a call into thumb code
             if ((op & 0x0E000000) == 0x0A000000)
             {
+                _from = pc; _link = LINK_ARM_CALL;
                 Call(pc + 8 + ((u32)((int32_t)(op << 8) >> 6)) + ((op >> 23) & 2), true, r, depth);
-                r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = r.kind[12] = NONE;
+                r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = r.kind[12] = r.kind[14] = NONE;
                 if (!AnyIo(r))
                     return;
                 continue;
@@ -148,7 +253,7 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
         }
         u32 rn = (op >> 16) & 0xF, rd = (op >> 12) & 0xF;
         auto kill = [&](u32 x) { if (x < 16) r.kind[x] = NONE; };
-        auto setv = [&](u32 x, u32 v) { if (x < 13) { r.kind[x] = isIo(v) ? IO : CONST; r.val[x] = v; } };
+        auto setv = [&](u32 x, u32 v) { if (ok(x)) { r.kind[x] = isIo(v) ? IO : CONST; r.val[x] = v; } };
         u32 t = (op >> 25) & 7;
 
         // branches
@@ -157,28 +262,60 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
             if (op & 0x01000000)
             {
                 // bl: follow the callee with the io arguments
+                _from = pc; _link = LINK_ARM_CALL;
                 Call(pc + 8 + ((u32)((int32_t)(op << 8) >> 6)), false, r, depth);
-                r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = r.kind[12] = NONE;
+                r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = r.kind[12] = r.kind[14] = NONE;
                 if (!AnyIo(r))
                     return;
                 continue;
             }
             if (al)
+            {
+                // on at the target, as a call that doesn't come back: a tail
+                // call (ldr r1, =io / b MI_Copy32B) or the join of an if
+                _from = pc; _link = LINK_ARM_JUMP;
+                Call(pc + 8 + ((u32)((int32_t)(op << 8) >> 6)), false, r, depth, true);
                 return;
-            continue; // a conditional branch: on along the fall-through
+            }
+            // a conditional branch: on along the fall-through, and a short
+            // forward one along its taken side too (the else of an if)
+            u32 to = pc + 8 + ((u32)((int32_t)(op << 8) >> 6));
+            if (to > pc && to - pc <= 0x100 && forks < 3 && _forkDepth < 2)
+            {
+                forks++; _forkDepth++;
+                Trace(to, r, depth);
+                _forkDepth--;
+            }
+            continue;
         }
         // bx / blx register
         if ((op & 0x0FFFFFD0) == 0x012FFF10)
         {
+            u32 rm = op & 0xF;
+            bool known = ok(rm) && r.kind[rm] == CONST;
+            u32 to = r.val[rm];
             if (op & 0x20)
             {
-                r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = r.kind[12] = NONE;
+                if (known)
+                {
+                    _from = pc; _link = al ? LINK_ARM_CALL : LINK_NONE;
+                    Call(to, to & 1, r, depth);
+                }
+                r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = r.kind[12] = r.kind[14] = NONE;
                 if (!AnyIo(r))
                     return;
                 continue;
             }
             if (al)
+            {
+                // ldr ip, =MI_Copy32B / ldr r1, =io / bx ip
+                if (known)
+                {
+                    _from = pc; _link = LINK_ARM_JUMPREG;
+                    Call(to, to & 1, r, depth, true);
+                }
                 return;
+            }
             continue;
         }
         // block transfer
@@ -194,14 +331,14 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
                     if (list & (1 << i)) kill(i);
                 if (wb) kill(rn);
             }
-            else if (rn < 13 && r.kind[rn] == IO)
+            else if (ok(rn) && r.kind[rn] >= IO)
             {
                 u32 cnt = 0;
                 for (int i = 0; i < 16; i++)
                     if (list & (1 << i)) cnt++;
                 u32 b = r.val[rn];
                 u32 lo = up ? b + (pre ? 4 : 0) : b - 4 * cnt + (pre ? 0 : 4);
-                if (touches(lo, 4 * cnt) && !(list & 0xE000))
+                if (hit(r.kind[rn], lo, 4 * cnt) && !(list & 0xE000))
                     AddSiteAt(pc, false, depth);
                 if (wb)
                 {
@@ -241,13 +378,13 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
                     kill(rd);
                 if ((wb || !pre) && rn != rd) kill(rn);
             }
-            else if (rn < 13 && r.kind[rn] == IO)
+            else if (ok(rn) && r.kind[rn] >= IO)
             {
                 u32 b = r.val[rn];
                 if (imm)
                 {
                     u32 a = pre ? (up ? b + off : b - off) : b;
-                    if (rd < 13 && touches(a, byte ? 1 : 4))
+                    if (ok(rd) && hit(r.kind[rn], a, byte ? 1 : 4))
                         AddSiteAt(pc, false, depth);
                     if (wb || !pre)
                     {
@@ -255,8 +392,13 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
                         else kill(rn);
                     }
                 }
-                else if (wb || !pre)
-                    kill(rn);
+                else
+                {
+                    if (depth == 1 && touches(b, 0x40) && InLoop(pc, false))
+                        AddCopy(pc, false, op);
+                    if (wb || !pre)
+                        kill(rn);
+                }
             }
             else if ((wb || !pre) && rn < 16)
                 kill(rn);
@@ -271,22 +413,23 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
             if (sh == 0)
             {
                 // multiplies and swaps: rd at 19-16 (and 15-12 for the long ones)
-                kill(rn); kill(rd);
+                kill(rn);
+                if (op & (3 << 23)) kill(rd); // long multiplies and swaps; plain mul/mla leave 15-12 alone
                 if (!AnyIo(r)) return;
                 continue;
             }
             bool load = op & (1 << 20), wb = op & (1 << 21), immForm = op & (1 << 22), up = op & (1 << 23), pre = op & (1 << 24);
             u32 off = ((op >> 4) & 0xF0) | (op & 0xF);
             bool store = !load && (sh == 1 || sh == 3); // strh, strd
-            if (store && rn < 13 && r.kind[rn] == IO)
+            if (store && ok(rn) && r.kind[rn] >= IO)
             {
                 u32 b = r.val[rn];
                 if (immForm)
                 {
                     u32 a = pre ? (up ? b + off : b - off) : b;
                     u32 size = sh == 1 ? 2 : 8;
-                    bool regsOk = sh == 1 ? rd < 13 : (rd < 12 && !(rd & 1));
-                    if (regsOk && touches(a, size))
+                    bool regsOk = sh == 1 ? ok(rd) : (rd < 12 && !(rd & 1));
+                    if (regsOk && hit(r.kind[rn], a, size))
                         AddSiteAt(pc, false, depth);
                     if (wb || !pre)
                     {
@@ -294,8 +437,14 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
                         else kill(rn);
                     }
                 }
-                else if (wb || !pre)
-                    kill(rn);
+                else
+                {
+                    // [rn, rm]: no site, but in a loop it makes a copy routine
+                    if (depth == 1 && touches(b, 0x40) && InLoop(pc, false))
+                        AddCopy(pc, false, op);
+                    if (wb || !pre)
+                        kill(rn);
+                }
             }
             else
             {
@@ -336,16 +485,37 @@ void Scanner::Trace(u32 pc, Regs r, int depth)
             else if ((op & 0xFF0) == 0) // a register with no shift
             {
                 u32 rm = op & 0xF;
-                if (rm < 13 && r.kind[rm] != NONE) { bv = r.val[rm]; haveB = true; }
+                if (ok(rm) && r.kind[rm] != NONE) { bv = r.val[rm]; haveB = true; }
             }
             if (rd == 15)
             {
                 if (al) return;
                 continue;
             }
-            bool haveA = rn < 13 && r.kind[rn] != NONE;
+            bool haveA = ok(rn) && r.kind[rn] != NONE;
             u32 av = haveA ? r.val[rn] : 0;
-            if (al && haveB && opc == 13) setv(rd, bv);
+            u32 rmx = op & 0xF;
+            bool looseB = t == 0 && (op & 0xFF0) == 0 && ok(rmx) && r.kind[rmx] == IOX;
+            if (al && (opc == 4 || opc == 2 || opc == 12) && haveA && r.kind[rn] >= IO
+                && (r.kind[rn] == IOX || !haveB) && nearShadow(av))
+            {
+                // io base + something unknown (or already so): still near the
+                // shadow; a constant on top of the unknown still counts
+                r.kind[rd] = IOX;
+                r.val[rd] = r.kind[rn] == IOX && haveB ? (opc == 4 ? av + bv : opc == 2 ? av - bv : av | bv) : av;
+            }
+            else if (al && (opc == 4 || opc == 12) && !haveA && haveB && t == 1 && isIo(bv) && nearShadow(bv))
+            {
+                // something unknown + an io base: add r1, r4, #0x04000000
+                r.kind[rd] = IOX;
+                r.val[rd] = bv;
+            }
+            else if (al && opc == 13 && looseB)
+            {
+                r.kind[rd] = IOX; // mov of one
+                r.val[rd] = bv;
+            }
+            else if (al && haveB && opc == 13) setv(rd, bv);
             else if (al && haveB && haveA && opc == 4) setv(rd, av + bv);
             else if (al && haveB && haveA && opc == 2) setv(rd, av - bv);
             else if (al && haveB && haveA && opc == 12) setv(rd, av | bv);
@@ -379,10 +549,11 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
     auto setv = [&](u32 x, u32 v) { if (x < 13) { r.kind[x] = isIo(v) ? IO : CONST; r.val[x] = v; } };
     auto known = [&](u32 x) { return x < 13 && r.kind[x] != NONE; };
     auto store = [&](u32 rn, u32 rd, u32 off, u32 size) {
-        if (rn < 8 && r.kind[rn] == IO && touches(r.val[rn] + off, size))
+        if (rn < 8 && r.kind[rn] >= IO && hit(r.kind[rn], r.val[rn] + off, size))
             AddSiteAt(pc, true, depth);
         (void)rd;
     };
+    u32 forks = 0;
     for (int n = 0; n < 256; n++, pc += 2)
     {
         u32 op;
@@ -399,7 +570,13 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
             {
                 u32 rm = (op >> 6) & 7;
                 bool immf = op & 0x400, sub = op & 0x200;
-                if (known(rn) && (immf || known(rm)))
+                if (known(rn) && r.kind[rn] >= IO && nearShadow(r.val[rn])
+                    && (r.kind[rn] == IOX || (!immf && !known(rm))))
+                {
+                    r.kind[rd] = IOX;
+                    r.val[rd] = r.val[rn];
+                }
+                else if (known(rn) && (immf || known(rm)))
                 {
                     u32 b = immf ? rm : r.val[rm];
                     setv(rd, sub ? r.val[rn] - b : r.val[rn] + b);
@@ -452,8 +629,10 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
                 else kill(x);
                 break;
             }
-            case 0x0A: case 0x0B: // register offset transfers: only loads matter
-                if ((op >> 9) & 7) { if (((op >> 9) & 7) >= 3) kill(rd); }
+            case 0x0A: case 0x0B: // register offset transfers
+                if (((op >> 9) & 7) >= 3) kill(rd);
+                else if (depth == 1 && r.kind[rn] >= IO && touches(r.val[rn], 0x40) && InLoop(pc, true))
+                    AddCopy(pc, true, op); // str/strh/strb [rn, rm] in a loop: a copy routine
                 break;
             case 0x0C: store(rn, rd, ((op >> 6) & 31) * 4, 4); break; // str
             case 0x0E: store(rn, rd, (op >> 6) & 31, 1); break;       // strb
@@ -472,9 +651,9 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
             {
                 u32 b = (op >> 8) & 7, list = op & 0xFF, cnt = 0;
                 for (int i = 0; i < 8; i++) if (list & (1 << i)) cnt++;
-                if (r.kind[b] == IO)
+                if (r.kind[b] >= IO)
                 {
-                    if (touches(r.val[b], cnt * 4)) AddSiteAt(pc, true, depth);
+                    if (hit(r.kind[b], r.val[b], cnt * 4)) AddSiteAt(pc, true, depth);
                     r.val[b] += cnt * 4;
                 }
                 break;
@@ -488,6 +667,13 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
             }
             case 0x1A: case 0x1B: // conditional branch, swi
                 if ((op & 0x0F00) == 0x0F00) { r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = NONE; }
+                else if ((op & 0x0F00) != 0x0E00 && !(op & 0x80) && forks < 3 && _forkDepth < 2)
+                {
+                    // forward: along its taken side too
+                    forks++; _forkDepth++;
+                    TraceThumb(pc + 4 + ((op & 0xFF) << 1), r, depth);
+                    _forkDepth--;
+                }
                 break;
             case 0x1C: return; // b
             case 0x1E: // bl/blx prefix
@@ -499,6 +685,7 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
                 {
                     u32 target = pc + 4 + hiOff + ((lo & 0x7FF) << 1);
                     bool toArm = (lo >> 11) == 0x1D;
+                    _from = pc; _link = LINK_THUMB_CALL;
                     Call(toArm ? target & ~3u : target, !toArm, r, depth);
                     r.kind[0] = r.kind[1] = r.kind[2] = r.kind[3] = r.kind[12] = NONE;
                     pc += 2;
@@ -545,6 +732,23 @@ void Scanner::Scan(u32 first, u32 count)
                 continue;
             Regs r;
             for (int i = 0; i < 16; i++) r.kind[i] = NONE;
+            // the literals loaded just before, unconditionally: a jump target
+            // (ldr ip, =MI_Copy32B / ldr r1, =io / bx ip)
+            for (u32 k = 1; k <= 3 && off >= k * 4; k++)
+            {
+                const uint8_t* q = p - k * 4;
+                u32 x = q[0] | (q[1] << 8) | (q[2] << 16) | ((u32)q[3] << 24);
+                u32 xd = (x >> 12) & 0xF, xv;
+                if ((x & 0xFF7F0000) != 0xE51F0000 || xd >= 13 || xd == rd)
+                    break;
+                u32 imm = x & 0xFFF;
+                u32 at = b.runAddress + off - k * 4;
+                if (Read32(at + 8 + ((x & (1 << 23)) ? imm : -imm), xv) && !isIo(xv) && r.kind[xd] == NONE)
+                {
+                    r.kind[xd] = CONST;
+                    r.val[xd] = xv;
+                }
+            }
             r.kind[rd] = IO;
             r.val[rd] = v;
             // conditional loads still give the register on the taken path

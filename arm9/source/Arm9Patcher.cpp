@@ -38,6 +38,7 @@
 #include "../../include/picoLoader7.h"
 #include "Arm9Patcher.h"
 #include "shadow/ShadowInstall.h"
+#include "shadow/ShadowOverlayPatch.h"
 
 #define PARENT_SECTION_START    0x02001000
 #define PARENT_SECTION_END      0x02003000
@@ -124,6 +125,11 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
                     LOG_ERROR("MIi_UncompressBackward not found\n");
                 }
             }
+#ifndef RTS_CENSUS
+            // the overlays the register shadow scans come compressed the same way
+            ShadowInstall::SetUncompress(miiUncompressBackward ? miiUncompressBackward
+                : FindMIiUncompressBackward(romHeader->arm9LoadAddress, sdkVersion));
+#endif
 
             if (sdkVersion.IsTwlSdk())
             {
@@ -261,7 +267,7 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
         patchCollection.AddPatch(new CardiReadRomIdCorePatch());
         osResetSystemPatch = new OSResetSystemPatch(loaderInfo, runInDSiMode);
         patchCollection.AddPatch(osResetSystemPatch);
-        AddGamePatches(patchCollection, romHeader->gameCode, apListEntry);
+        AddGamePatches(patchCollection, romHeader->gameCode, apListEntry, exitComboEnabled && !sdkVersion.IsTwlSdk());
 
         // Added last on purpose: this is an optional feature that must never
         // take patch heap a mandatory patch needs. Because ApplyPatch runs in
@@ -353,7 +359,7 @@ const u32* Arm9Patcher::FindMIiUncompressBackward(u32 arm9LoadAddress, SdkVersio
     return miiUncompressBackward;
 }
 
-void Arm9Patcher::AddGamePatches(PatchCollection& patchCollection, u32 gameCode, const ApListEntry* apListEntry) const
+void Arm9Patcher::AddGamePatches(PatchCollection& patchCollection, u32 gameCode, const ApListEntry* apListEntry, bool shadowOverlays) const
 {
     OverlayHookPatch* overlayHookPatch;
     if (gameCode == GAMECODE("BO5P") || gameCode == GAMECODE("BO5E") || gameCode == GAMECODE("BO5J"))
@@ -370,6 +376,13 @@ void Arm9Patcher::AddGamePatches(PatchCollection& patchCollection, u32 gameCode,
             AddDSProtectPatches(patchCollection, overlayHookPatch, apListEntry);
         }
         AddGameSpecificPatches(patchCollection, overlayHookPatch, gameCode);
+#ifndef RTS_CENSUS
+        // the rts's register shadow, for the stores in the overlays
+        if (shadowOverlays)
+            overlayHookPatch->AddOptionalOverlayPatch(new ShadowOverlayPatch());
+#else
+        (void)shadowOverlays;
+#endif
     }
 
     patchCollection.AddPatch(overlayHookPatch);
