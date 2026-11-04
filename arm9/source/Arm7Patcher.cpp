@@ -21,6 +21,7 @@
 #include "patches/arm7/DsiBiosPitchTablePatch.h"
 #include "patches/DsiBiosLz77SwiPatch.h"
 #include "Arm7Patcher.h"
+#include "shadow/ShadowInstall.h"
 
 static u32 correctAddress(u32 address, bool runInDSiMode)
 {
@@ -204,6 +205,27 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
 #ifdef RTS_CENSUS
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
 #else
+        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && ShadowInstall::SpaceNeeded() != 0)
+        {
+            // the trap-free shadow, from the same place; the arm9 reaches it once
+            // its install switches off the sdk's region 2
+            u32 start = (mainMemoryArenaLo + 31) & ~31u;
+            u32 offset = start & 0x3FFFFF;
+            u32 want = (ShadowInstall::SpaceNeeded() + 31) & ~31u;
+            // up to the census's small size always (pokemon's arena took that), more
+            // only with the census's spare left to the arm7
+            u32 room = offset + CENSUS_ARM7_SPARE <= 0x3FF000 ? (0x3FF000 - CENSUS_ARM7_SPARE - offset) & ~31u : 0;
+            if (room < CENSUS_SPACE_MIN)
+                room = CENSUS_SPACE_MIN;
+            censusSize = want < room ? want : room;
+            if (start >= 0x02000000 && start < 0x02800000 && offset + censusSize <= 0x3FF000)
+            {
+                censusSpace = (void*)correctAddress(start, romHeader);
+                censusRunAddress = 0x02000000 + offset;
+                mainMemoryArenaLo = start + censusSize;
+                LOG_DEBUG("Shadow space at 0x%x, 0x%x bytes\n", censusRunAddress, censusSize);
+            }
+        }
         if (false)
 #endif
         {

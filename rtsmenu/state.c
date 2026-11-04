@@ -767,6 +767,21 @@ static void shadowLeave(void)
     if (start < 0x02000000 || start >= 0x02400000 || (start & 3))
         return;
     volatile u32* live = (volatile u32*)start;
+    if (live[0] == 0x32444853 /* 'SHD2' */)
+    {
+        // the trap-free shadow (shadow/ShadowPatchCode.s): came with the state,
+        // stubs, code and all
+        const u8* data = (const u8*)start + 0x10;
+        const u8* flags = (const u8*)start + 0x130;
+        for (u32 i = 0; i < 0x120; i += 2)
+        {
+            if (!flags[i] && !flags[i + 1])
+                continue;
+            u32 addr = i < 0x48 ? 0x04000010 + i : i < 0x90 ? 0x04001010 + (i - 0x48) : 0x04000330 + (i - 0x90);
+            *(vu16*)addr = data[i] | (data[i + 1] << 8);
+        }
+        return;
+    }
     if (live[0x108 / 4] != 0x31534E43 /* 'CNS1' */)
         return;
     u8* arrays = (u8*)start + CENSUS_ARRAYS_OFFSET;
@@ -867,7 +882,8 @@ void mainRamKeep(void* block, u32 keep[KEEP_RANGES][2])
     // protection unit holds now. Only its variables and code: its shadow, patch
     // table and stubs come with the state, as they go with the state's code.
     keep[3][0] = keep[3][1] = 0;
-    if (sRts->censusStart >= 0x02000000 && sRts->censusStart < 0x03000000 && !(sRts->censusStart & 3))
+    if (sRts->censusStart >= 0x02000000 && sRts->censusStart < 0x03000000 && !(sRts->censusStart & 3)
+        && ((volatile u32*)((sRts->censusStart & 0x3FFFFF) | 0x02000000))[0x108 / 4] == 0x31534E43 /* 'CNS1' */)
     {
         keep[3][0] = sRts->censusStart & 0x3FFFFF;
         keep[3][1] = keep[3][0] + CENSUS_ARRAYS_OFFSET;

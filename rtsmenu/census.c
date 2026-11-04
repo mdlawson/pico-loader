@@ -200,6 +200,24 @@ u32 censusReport(char* out, u32 size, char* line1, char* line2)
     volatile u32* v = vars();
     if (!v)
     {
+        u32 st = sRts->censusStart;
+        volatile u32* shd = st >= 0x02000000 && st < 0x02400000 && !(st & 3) ? (volatile u32*)st : 0;
+        if (shd && shd[0] == 0x32444853 /* 'SHD2' */)
+        {
+            const volatile u8* flags = (const volatile u8*)st + 0x130;
+            u32 written = 0;
+            for (u32 i = 0; i < 0x120; i++)
+                written += flags[i] != 0;
+            put("Register shadow (no traps) at ");
+            putHex(st, 8);
+            put(": ");
+            putDec(shd[2]);
+            put(" store sites patched, ");
+            putDec(written);
+            put(" of 288 bytes written so far.");
+            newline();
+            return sLen;
+        }
         put("No census in this boot: it needs the exit combo, an ntr sdk game and room in the");
         newline();
         put("arm7's main memory arena.");

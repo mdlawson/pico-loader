@@ -37,6 +37,7 @@
 #include "errorDisplay/ErrorDisplay.h"
 #include "../../include/picoLoader7.h"
 #include "Arm9Patcher.h"
+#include "shadow/ShadowInstall.h"
 
 #define PARENT_SECTION_START    0x02001000
 #define PARENT_SECTION_END      0x02003000
@@ -285,6 +286,14 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
     {
         ErrorDisplay().PrintError("Failed to apply arm9 patches.");
     }
+
+#ifndef RTS_CENSUS
+    // the display register shadow for the rts, put in once the arm7's arena is known
+    if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !sdkVersion.IsTwlSdk())
+        ShadowInstall::Collect(romHeader->arm9LoadAddress, arm9Size, patchContext.GetAutoloadAdjuster());
+    else
+        ShadowInstall::Collect(0, 0, nullptr);
+#endif
 
     // On a DSi or 3DS a game whose exit combo got installed keeps the bios of
     // the DSi, so the combo can return to dsi mode. Everything else gets the ds

@@ -21,6 +21,7 @@
 #include "Arm9IoRegisterClearer.h"
 #include "Arm9Patcher.h"
 #include "Arm7Patcher.h"
+#include "shadow/ShadowInstall.h"
 #include "patches/arm9/ExitComboPatch.h"
 #include "patches/platform/LoaderPlatform.h"
 #include "patches/platform/LoaderPlatformFactory.h"
@@ -194,7 +195,11 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
         dc_drainWriteBuffer();
     }
     u32 census = 0;
+#ifdef RTS_CENSUS
     if (sExitComboPatch != nullptr && exitComboArm7Installed && sExitComboPatch->InstallCensus(censusSpace, censusRun, censusSize))
+#else
+    if (sExitComboPatch != nullptr && exitComboArm7Installed && ShadowInstall::Install(censusSpace, censusRun, censusSize))
+#endif
     {
         census = censusRun;
         dc_flushAll();
