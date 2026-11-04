@@ -12,3 +12,4 @@ extern "C" void patch_census_abort_entry(void);
 #define CENSUS_V_BSTACK     0x74
 #define CENSUS_V_ARRAYS     0xF4
 #define CENSUS_V_MAGIC      0x108
+#define CENSUS_V_SLOTS      0x11C

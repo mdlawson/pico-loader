@@ -750,6 +750,62 @@ int dmaRestored(u32 control)
 // none writes under the menu): source, destination, control per channel.
 static u32 sDma[4][3];
 
+// The census's shadow of the registers no one can read back (CensusPatchCode.s,
+// from its arrays): the state brought its own along with its main memory, so
+// after a load it holds the saved session's values; written back here. A state
+// whose stubs belong to another build of the census gets its patched sites put
+// back as they were instead, as its stubs would run the wrong code.
+#define SH_MAGIC        0x31444853 // 'SHD1'
+#define SH_SHADOW       0x000
+#define SH_POOL         0x500
+#define SH_DATA         8
+#define SH_FLAGS        0x128
+
+static void shadowLeave(void)
+{
+    u32 start = sRts->censusStart;
+    if (start < 0x02000000 || start >= 0x02400000 || (start & 3))
+        return;
+    volatile u32* live = (volatile u32*)start;
+    if (live[0x108 / 4] != 0x31534E43 /* 'CNS1' */)
+        return;
+    u8* arrays = (u8*)start + CENSUS_ARRAYS_OFFSET;
+    u32* sh = (u32*)(arrays + SH_SHADOW);
+    if (sh[0] != SH_MAGIC)
+        return; // a state from before the shadow
+    // the open routine of this build is in the live code, which a load keeps
+    if (sh[1] != live[0x118 / 4])
+    {
+        // each stub: str lr / bl open / the store / bl close / ldr lr / b site+4
+        u32 slots = live[0x11C / 4];
+        for (u32 i = 0; i < slots && i < 512; i++)
+        {
+            u32* stub = (u32*)(arrays + SH_POOL + i * 24);
+            if (stub[0] != 0xE52DE010 || (stub[5] >> 24) != 0xEA)
+                continue;
+            u32 site = (u32)&stub[5] + 8 + ((int)(stub[5] << 8) >> 6) - 4;
+            u32 old = site >= 0x02000000 && site < 0x02400000 ? *(vu32*)site : 0;
+            u32 branch = 0x0A000000 | (((u32)stub - (site + 8)) >> 2 & 0xFFFFFF);
+            if ((old & 0x0FFFFFFF) == branch)
+                *(vu32*)site = (old & 0xF0000000) | (stub[2] & 0x0FFFFFFF);
+            stub[0] = 0;
+        }
+        sh[0] = 0;
+        dcFlushAll();
+        icInvalidateAll();
+        return;
+    }
+    const u8* data = (const u8*)sh + SH_DATA;
+    const u8* flags = (const u8*)sh + SH_FLAGS;
+    for (u32 i = 0; i < 0x120; i += 2)
+    {
+        if (!flags[i] && !flags[i + 1])
+            continue;
+        u32 addr = i < 0x48 ? 0x04000010 + i : i < 0x90 ? 0x04001010 + (i - 0x48) : 0x04000330 + (i - 0x90);
+        *(vu16*)addr = data[i] | (data[i + 1] << 8);
+    }
+}
+
 void stateLeave(void)
 {
     // The words each cpu had waiting go back the way they came: the arm7 sends
@@ -786,6 +842,7 @@ void stateLeave(void)
         dma[2] = control;
     }
     gxLoad(&sLoadGx);
+    shadowLeave();
     timersLeave(1);
     if (gCheckOnLeave)
     {
@@ -807,12 +864,13 @@ void mainRamKeep(void* block, u32 keep[KEEP_RANGES][2])
         keep[2][1] = keep[2][0] + sRts->arm7PatchSize;
     }
     // the census counts on through a load, and its variables say what the
-    // protection unit holds now
+    // protection unit holds now. Only its variables and code: its shadow, patch
+    // table and stubs come with the state, as they go with the state's code.
     keep[3][0] = keep[3][1] = 0;
     if (sRts->censusStart >= 0x02000000 && sRts->censusStart < 0x03000000 && !(sRts->censusStart & 3))
     {
         keep[3][0] = sRts->censusStart & 0x3FFFFF;
-        keep[3][1] = keep[3][0] + CENSUS_SPACE_SIZE;
+        keep[3][1] = keep[3][0] + CENSUS_ARRAYS_OFFSET;
     }
 }
 

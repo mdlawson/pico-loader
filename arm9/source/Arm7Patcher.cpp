@@ -38,7 +38,7 @@ static u32 correctAddress(u32 address, bool runInDSiMode)
 
 void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
     char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed, bool runInDSiMode,
-    bool keepDsiBios, void*& censusSpace, u32& censusRunAddress) const
+    bool keepDsiBios, void*& censusSpace, u32& censusRunAddress, u32& censusSize) const
 {
     cheatsPtr = nullptr;
     exitComboArm7Installed = false;
@@ -209,14 +209,16 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         {
             u32 start = (mainMemoryArenaLo + 31) & ~31u;
             u32 offset = start & 0x3FFFFF;
-            if (start >= 0x02000000 && start < 0x02800000 && offset + CENSUS_SPACE_SIZE <= 0x3FF000)
+            // a big pool when the arm7 can spare it (pokemon's arena is small)
+            censusSize = offset + CENSUS_SPACE_SIZE + CENSUS_ARM7_SPARE <= 0x3FF000 ? CENSUS_SPACE_SIZE : CENSUS_SPACE_MIN;
+            if (start >= 0x02000000 && start < 0x02800000 && offset + censusSize <= 0x3FF000)
             {
                 // written through the loader's view of main memory, run at
                 // the game's: the arm9's protection unit only maps the 4 MB
                 censusSpace = (void*)correctAddress(start, romHeader);
                 censusRunAddress = 0x02000000 + offset;
-                mainMemoryArenaLo = start + CENSUS_SPACE_SIZE;
-                LOG_DEBUG("Census space at 0x%x, written at 0x%p\n", censusRunAddress, censusSpace);
+                mainMemoryArenaLo = start + censusSize;
+                LOG_DEBUG("Census space at 0x%x, 0x%x bytes, written at 0x%p\n", censusRunAddress, censusSize, censusSpace);
             }
             else
             {

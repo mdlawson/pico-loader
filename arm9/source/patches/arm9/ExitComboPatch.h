@@ -26,7 +26,7 @@ public:
     /// @brief Puts the register-write census into space (CENSUS_SPACE_SIZE, in
     ///        main memory the arm9 can reach) and has the hook call it on every
     ///        vblank. Only with the hook in, and not for twl sdk games.
-    bool InstallCensus(void* space, u32 runAddress);
+    bool InstallCensus(void* space, u32 runAddress, u32 spaceSize);
 
 private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.

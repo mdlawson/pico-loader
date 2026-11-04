@@ -144,8 +144,13 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 // The arm9 register-write census (arm9/source/patches/arm9/CensusPatchCode.s):
 // variables and code, then the arrays from CENSUS_ARRAYS. Arm7Patcher takes it
 // from the arm7's main memory arena, below the arm9's no-access region.
-#define CENSUS_SPACE_SIZE           0x1C00
+// The space is CENSUS_SPACE_SIZE when that leaves the arm7 CENSUS_ARM7_SPARE of
+// its arena, else CENSUS_SPACE_MIN; the stub pool gets what the rest leaves.
+#define CENSUS_SPACE_SIZE           0x3C00
+#define CENSUS_SPACE_MIN            0x1C00
+#define CENSUS_ARM7_SPARE           0x4000
 #define CENSUS_ARRAYS               0x1000
+#define CENSUS_POOL                 0x500 // from CENSUS_ARRAYS, 24 bytes a stub
 #define CENSUS_MAGIC                0x31534E43 // 'CNS1'
 
 /// @brief Where the arm7 finds the stash file and the menu on the sd card.

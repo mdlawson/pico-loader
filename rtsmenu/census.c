@@ -33,11 +33,14 @@
 #define V_MAGIC         0x108
 #define CENSUS_MAGIC    0x31534E43 // 'CNS1'
 
-#define A_SITES         0x000
-#define SITE_COUNT      128
-#define A_REGS          0x400
-#define REG_COUNT       0x1DD
-#define A_MPU           0xB80
+#define A_SHADOW        0x000
+#define SH_MAGIC        0x31444853 // 'SHD1'
+#define SH_FLAGS        0x128
+#define A_MPU           0x280
+#define A_POOL          0x500
+#define V_SLOTS         0x11C
+#define V_PATCHED       0x110
+#define V_PATCHFAIL     0x114
 
 #define LINE_CYCLES     4260    // arm9 cycles per scanline: 355 dots of 12
 #define FRAME_LINES     263
@@ -156,58 +159,6 @@ static void putTenths(u32 v)
 static void newline(void)
 {
     put("\r\n");
-}
-
-static const char* regName(u32 o)
-{
-    static const struct { u16 from, to; const char* name; } names[] =
-    {
-        { 0x000, 0x003, "DISPCNT" },        { 0x004, 0x007, "DISPSTAT/VCOUNT" },
-        { 0x008, 0x00F, "BGxCNT" },         { 0x010, 0x01F, "BG scroll" },
-        { 0x020, 0x03F, "BG2/3 affine" },   { 0x040, 0x04B, "windows" },
-        { 0x04C, 0x04F, "MOSAIC" },         { 0x050, 0x057, "blending" },
-        { 0x060, 0x063, "DISP3DCNT" },      { 0x064, 0x067, "DISPCAPCNT" },
-        { 0x068, 0x06B, "DISP_MMEM_FIFO" }, { 0x06C, 0x06F, "MASTER_BRIGHT" },
-        { 0x0B0, 0x0DF, "DMA" },            { 0x0E0, 0x0EF, "DMA fill" },
-        { 0x100, 0x10F, "timers" },         { 0x130, 0x137, "keys" },
-        { 0x180, 0x183, "IPCSYNC" },        { 0x184, 0x187, "IPCFIFOCNT" },
-        { 0x188, 0x18B, "IPCFIFOSEND" },    { 0x1A0, 0x1BF, "card" },
-        { 0x204, 0x207, "EXMEMCNT" },       { 0x208, 0x20B, "IME" },
-        { 0x210, 0x213, "IE" },             { 0x214, 0x217, "IF" },
-        { 0x240, 0x24B, "VRAMCNT/WRAMCNT" },{ 0x280, 0x2BF, "divide/sqrt" },
-        { 0x300, 0x303, "POSTFLG" },        { 0x304, 0x307, "POWCNT1" },
-        { 0x320, 0x3FF, "3D settings" },    { 0x400, 0x43F, "GXFIFO" },
-        { 0x440, 0x5FF, "3D commands" },    { 0x600, 0x6FF, "3D status/results" },
-    };
-    for (u32 i = 0; i < sizeof(names) / sizeof(names[0]); i++)
-        if (o >= names[i].from && o <= names[i].to)
-            return names[i].name;
-    return "";
-}
-
-static u32 regOffset(u32 index)
-{
-    if (index < 0x1C0)
-        return index * 4;
-    if (index < 0x1DC)
-        return 0x1000 + (index - 0x1C0) * 4;
-    return 0xFFFFFFFF;
-}
-
-static void putReg(u32 index)
-{
-    u32 o = regOffset(index);
-    if (o == 0xFFFFFFFF)
-    {
-        put("other io");
-        return;
-    }
-    put("04");
-    putHex(0x000000 + o, 6);
-    put(" ");
-    if (o >= 0x1000)
-        put("B ");
-    put(regName(o & 0xFFF));
 }
 
 // into a 33 byte line
@@ -405,88 +356,55 @@ u32 censusReport(char* out, u32 size, char* line1, char* line2)
     }
     newline();
 
-    // sites, busiest first
-    put("busiest store sites (address, t = thumb, traps):");
+    // the register shadow: sites taken off the trap, and what it holds
+    put("store sites patched off the trap: ");
+    putDec(V(v, V_PATCHED));
+    put(" of ");
+    putDec(V(v, V_SLOTS));
+    put(", no slot for ");
+    putDec(V(v, V_PATCHFAIL));
     newline();
-    u32 shown = 0, siteTotal = 0, sites = 0;
-    for (int i = 0; i < SITE_COUNT; i++)
-        if (a[A_SITES / 4 + 2 * i])
-        {
-            sites++;
-            siteTotal += a[A_SITES / 4 + 2 * i + 1];
-        }
-    u32 last = 0xFFFFFFFF;
-    while (shown < 24)
+    u32 shown = 0;
+    for (u32 i = 0; i < V(v, V_SLOTS) && i < 512 && shown < 32; i++)
     {
-        u32 best = 0, bestAt = 0xFFFFFFFF;
-        for (int i = 0; i < SITE_COUNT; i++)
-        {
-            u32 n = a[A_SITES / 4 + 2 * i + 1];
-            if (a[A_SITES / 4 + 2 * i] && n < last && n > best)
-            {
-                best = n;
-                bestAt = i;
-            }
-        }
-        if (bestAt == 0xFFFFFFFF)
-            break;
-        // every site with this count
-        for (int i = 0; i < SITE_COUNT && shown < 24; i++)
-        {
-            if (a[A_SITES / 4 + 2 * i] && a[A_SITES / 4 + 2 * i + 1] == best)
-            {
-                u32 pc = a[A_SITES / 4 + 2 * i];
-                put("  ");
-                putHex(pc & ~1u, 8);
-                put(pc & 1 ? " t " : "   ");
-                putDec(best);
-                newline();
-                shown++;
-            }
-        }
-        last = best;
+        const volatile u32* stub = a + (A_POOL + i * 24) / 4;
+        if (!stub[0])
+            continue;
+        // the site from the stub's way back, the store as the stub has it
+        u32 site = (u32)&stub[5] + 8 + ((int)(stub[5] << 8) >> 6) - 4;
+        put(shown % 4 ? "  " : "  ");
+        putHex(site, 8);
+        put(":");
+        putHex(stub[2], 8);
+        if (++shown % 4 == 0)
+            newline();
     }
-    put("  sites ");
-    putDec(sites);
-    put(", their traps ");
-    putDec(siteTotal);
-    put(", traps from sites past the table ");
-    putDec(V(v, V_SITE_OVF));
+    if (shown % 4)
+        newline();
+    volatile u32* sh = a + A_SHADOW / 4;
+    put("shadow ");
+    put(sh[0] == SH_MAGIC ? "on" : "missing");
+    put(", registers the game wrote:");
     newline();
-    newline();
-
-    // registers, busiest first
-    put("busiest registers (word, traps or words written):");
-    newline();
+    const volatile u8* data = (const volatile u8*)(sh + 2);
+    const volatile u8* flags = (const volatile u8*)sh + SH_FLAGS;
     shown = 0;
-    last = 0xFFFFFFFF;
-    while (shown < 40)
+    for (u32 i = 0; i < 0x120; i += 2)
     {
-        u32 best = 0;
-        for (int i = 0; i < REG_COUNT; i++)
-        {
-            u32 n = a[A_REGS / 4 + i];
-            if (n < last && n > best)
-                best = n;
-        }
-        if (!best)
-            break;
-        for (int i = 0; i < REG_COUNT && shown < 40; i++)
-        {
-            if (a[A_REGS / 4 + i] == best)
-            {
-                put("  ");
-                putReg(i);
-                put(": ");
-                putDec(best);
-                newline();
-                shown++;
-            }
-        }
-        last = best;
+        if (!flags[i] && !flags[i + 1])
+            continue;
+        u32 o = i < 0x48 ? 0x10 + i : i < 0x90 ? 0x1010 + (i - 0x48) : 0x330 + (i - 0x90);
+        put(shown % 6 ? " " : "  ");
+        putHex(o, 4);
+        put("=");
+        putHex(data[i] | (data[i + 1] << 8), 4);
+        if (++shown % 6 == 0)
+            newline();
     }
+    if (shown % 6)
+        newline();
     newline();
-    put("Counts restart after each report; the calibration stays.");
+    put("Counts restart after each report; the calibration, patches and shadow stay.");
     newline();
     return sLen;
 }
@@ -506,7 +424,4 @@ void censusRestart(void)
     v[V_THUMB / 4] = 0;
     v[V_STM / 4] = 0;
     v[V_SITE_OVF / 4] = 0;
-    volatile u32* a = (volatile u32*)V(v, V_ARRAYS);
-    for (int i = 0; i < A_MPU / 4; i++)
-        a[i] = 0;
 }

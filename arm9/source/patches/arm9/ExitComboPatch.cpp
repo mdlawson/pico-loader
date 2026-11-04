@@ -207,7 +207,7 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     }
 }
 
-bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
+bool ExitComboPatch::InstallCensus(void* space, u32 runAddress, u32 spaceSize)
 {
     if (!_installed || !_censusLiteral || !_censusGateTarget || _twlSdk || !space || !runAddress)
         return false;
@@ -218,7 +218,7 @@ bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
         return false;
     }
     u32* words = (u32*)space;
-    for (u32 i = 0; i < CENSUS_SPACE_SIZE / 4; i++)
+    for (u32 i = 0; i < spaceSize / 4; i++)
         words[i] = 0;
     const u32* code = (const u32*)SECTION_START(patch_census);
     for (u32 i = 0; i < size / 4; i++)
@@ -229,6 +229,7 @@ bool ExitComboPatch::InstallCensus(void* space, u32 runAddress)
     words[CENSUS_V_BSTACK / 4] = vector - 0x10; // the bios's control, spsr, r12, lr
     words[CENSUS_V_ARRAYS / 4] = runAddress + CENSUS_ARRAYS;
     words[CENSUS_V_MAGIC / 4] = CENSUS_MAGIC;
+    words[CENSUS_V_SLOTS / 4] = (spaceSize - CENSUS_ARRAYS - CENSUS_POOL) / 24;
     // the hook calls the gate, which opens the sdk's region 2 and goes on into the census
     *_censusGateTarget = runAddress + ((u32)&patch_census_tick_entry - (u32)SECTION_START(patch_census));
     *_censusLiteral = _censusGateEntry;

@@ -20,5 +20,5 @@ public:
     /// @return A pointer to the patch space in IWRAM, or \c nullptr if the patches have been placed in main memory.
     void* ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
         char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed,
-        bool runInDSiMode, bool keepDsiBios, void*& censusSpace, u32& censusRunAddress) const;
+        bool runInDSiMode, bool keepDsiBios, void*& censusSpace, u32& censusRunAddress, u32& censusSize) const;
 };

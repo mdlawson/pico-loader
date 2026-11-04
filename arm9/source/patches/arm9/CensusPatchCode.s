@@ -68,12 +68,28 @@
 .equ V_UNITS,       0x100 // words or halfwords the store wrote
 .equ V_KIND,        0x104
 .equ V_MAGIC,       0x108 // 'CNS1' (loader)
+.equ V_HIT,         0x10C // this trap wrote a shadowed register
+.equ V_PATCHED,     0x110 // store sites taken off the trap
+.equ V_PATCHFAIL,   0x114 // sites that found no slot
+.equ V_OPEN,        0x118 // the stubs' open routine (a state's stubs need the same)
+.equ V_SLOTS,       0x11C // stubs the pool holds (loader, from the space it got)
 .equ VARS_SIZE,     0x120
 
 // arrays, from V_ARRAYS
-.equ A_SITES,       0x000 // 128 x {pc | thumb, count}
-.equ A_REGS,        0x400 // 0x1DD words: 0x000-0x6FF, 0x1000-0x106F per word, then the rest
-.equ A_MPU,         0xB80 // regions 0-7, dperm, iperm, dcache, icache, wbuf, control at install
+.equ A_SHADOW,      0x000 // 'SHD1', the stubs' open routine, data 0x120, written flags 0x120
+.equ A_MPU,         0x280 // regions 0-7, dperm, iperm, dcache, icache, wbuf, control at install
+.equ A_COUNT,       0x300 // 64 x {site, traps}: only hot sites get a stub
+.equ A_POOL,        0x500 // V_SLOTS x 24 bytes: a stub per patched site, free while its
+                          // first word is 0. The stub is all a site's undoing needs: its
+                          // last word branches back past the site, and its store is the
+                          // site's under the site's branch's condition.
+.equ HOT_TRAPS,     8
+.equ SH_DATA,       8
+.equ SH_FLAGS,      0x128
+.equ SH_MAGIC,      0x31444853 // 'SHD1'
+// The shadow: the registers no one can read back, kept as the game writes them
+// so a state can put them back. Index: 0x04000010-57 at 0, 0x04001010-57 at
+// 0x48, 0x04000330-3BF at 0x90.
 
 .equ CAL_N,         0x400
 .equ OUR_REGION,    0x04000019 // base 0x04000000, 8 KB, enabled
@@ -296,6 +312,30 @@ install:
     mov r1, #3 // full access
     mov r1, r1, lsl r0
     str r1, [r8, #V_NIB_RW]
+    // the stubs' open: orr #(0xF << 4k), eor #(0xC << 4k); rotate right by 32 - 4k
+    rsb r1, r0, #32
+    and r1, r1, #31
+    mov r1, r1, lsr #1
+    ldr r2, =0xE380000F
+    orr r2, r2, r1, lsl #8
+    adrl r3, shOpenOrr
+    str r2, [r3]
+    ldr r2, =0xE220000C
+    orr r2, r2, r1, lsl #8
+    str r2, [r3, #4]
+    mcr p15, 0, r3, c7, c10, 1
+    add r2, r3, #4
+    mcr p15, 0, r2, c7, c10, 1
+    mov r1, #0
+    mcr p15, 0, r1, c7, c10, 4
+    mcr p15, 0, r3, c7, c5, 1
+    mcr p15, 0, r2, c7, c5, 1
+    add r2, r8, #(0x1000 + A_SHADOW)
+    ldr r1, =SH_MAGIC
+    str r1, [r2]
+    adrl r1, shOpen
+    str r1, [r2, #4]
+    str r1, [r8, #V_OPEN]
 
     // The vector first, so the first trap finds the handler. The bios reads it
     // with the mpu off, past the data cache, and so does the handler's chain.
@@ -778,22 +818,35 @@ checkRange:
     beq storeMultiple
     mov r0, r5
     bl getReg
-    cmp r6, #0
-    biceq r1, r4, #3
-    streq r0, [r1]
     cmp r6, #1
-    biceq r1, r4, #1
-    strheq r0, [r1]
+    beq sHalf
     cmp r6, #2
-    strbeq r0, [r4]
-    cmp r6, #4
-    bne stored
+    beq sByte
     bic r1, r4, #3
     str r0, [r1]
+    mov r11, #0
+    bl shadow
+    cmp r6, #4
+    bne stored
     add r0, r5, #1
     bl getReg
     bic r1, r4, #3
-    str r0, [r1, #4]
+    add r1, r1, #4
+    str r0, [r1]
+    mov r11, #0
+    bl shadow
+    b stored
+sHalf:
+    bic r1, r4, #1
+    strh r0, [r1]
+    mov r11, #1
+    bl shadow
+    b stored
+sByte:
+    mov r1, r4
+    strb r0, [r1]
+    mov r11, #2
+    bl shadow
     b stored
 
 storeMultiple:
@@ -805,7 +858,10 @@ storeMultiple:
     bcc 2f
     mov r0, r3
     bl getReg
-    str r0, [r1], #4
+    str r0, [r1]
+    mov r11, #0
+    bl shadow
+    add r1, r1, #4
 2:
     add r3, r3, #1
     cmp r2, #0
@@ -835,68 +891,15 @@ stored:
     addeq r0, r0, #1
     streq r0, [r8, #V_STM]
 
-    // per register word
-    ldr r5, [r8, #V_ARRAYS]
-    add r6, r5, #A_REGS
-    ldr r3, [r8, #V_UNITS]
-    ldr r0, [r8, #V_KIND]
-    cmp r0, #4
-    moveq r3, #2
-    bic r2, r4, #3
-1:
-    sub r1, r2, #0x04000000
-    cmp r1, #0x700
-    movlo r1, r1, lsr #2
-    blo 2f
-    sub r1, r1, #0x1000
-    cmp r1, #0x70
-    movlo r1, r1, lsr #2
-    addlo r1, r1, #0x1C0
-    movhs r1, #0x1DC
-2:
-    ldr r0, [r6, r1, lsl #2]
-    add r0, r0, #1
-    str r0, [r6, r1, lsl #2]
-    add r2, r2, #4
-    subs r3, r3, #1
-    bhi 1b
-
-    // per site: open addressing over 128 slots, 16 tries
-    ldr r1, [r8, #V_PCF]
-    mov r2, r1, lsr #1
-    and r2, r2, #127
-    mov r3, #16
-1:
-    add r12, r5, r2, lsl #3
-    ldr r0, [r12]
-    cmp r0, r1
-    beq 3f
+    // a site that wrote nothing shadowed comes off the trap
+    ldr r0, [r8, #V_HIT]
+    mov r1, #0
+    str r1, [r8, #V_HIT]
     cmp r0, #0
-    streq r1, [r12]
-    beq 3f
-    add r2, r2, #1
-    and r2, r2, #127
-    subs r3, r3, #1
-    bne 1b
-    ldr r0, [r8, #V_SITE_OVF]
-    add r0, r0, #1
-    str r0, [r8, #V_SITE_OVF]
-    b 4f
-3:
-    ldr r0, [r12, #4]
-    add r0, r0, #1
-    str r0, [r12, #4]
-4:
-    // lines crossed while in here: summed, an estimate of the time taken
-    mov r0, #0x04000000
-    ldrh r0, [r0, #6]
-    ldr r1, [r8, #V_VC0]
-    subs r0, r0, r1
-    addmi r0, r0, #256
-    addmi r0, r0, #7
-    ldr r1, [r8, #V_LINES]
-    add r1, r1, r0
-    str r1, [r8, #V_LINES]
+    bne handlerReturn
+    ldr r1, [r8, #V_PCF]
+    tst r1, #1
+    bleq tryPatch
 
 handlerReturn:
     // the bios resumes at the lr it kept - 4: past the store for arm, which
@@ -941,6 +944,239 @@ chainOff:
     cmp r12, #0
     bxeq lr
     bx r12
+
+// ---------------------------------------------------------------- shadow
+// r1 = address, r0 = value, r11 = 0 word, 1 half, 2 byte. Keeps r0-r10, uses r11, r12.
+shadow:
+    sub r12, r1, #0x04000000
+    sub r12, r12, #0x10
+    cmp r12, #0x48
+    blo 1f
+    sub r12, r12, #0x1000
+    cmp r12, #0x48
+    addlo r12, r12, #0x48
+    blo 1f
+    add r12, r12, #0x1000
+    sub r12, r12, #0x320
+    cmp r12, #0x90
+    bxhs lr
+    add r12, r12, #0x90
+1:
+    add r12, r12, r8
+    add r12, r12, #(0x1000 + A_SHADOW)
+    cmp r11, #1
+    strlo r0, [r12, #SH_DATA]
+    strheq r0, [r12, #SH_DATA]
+    strbhi r0, [r12, #SH_DATA]
+    add r12, r12, #(SH_FLAGS - SH_DATA)
+    mvn r11, #0
+    strlo r11, [r12, #SH_DATA]
+    strheq r11, [r12, #SH_DATA]
+    strbhi r11, [r12, #SH_DATA]
+    mov r11, #1
+    str r11, [r8, #V_HIT]
+    bx lr
+
+// ---------------------------------------------------------------- patching
+// An arm store at r9 that only wrote registers nobody needs a copy of: it
+// becomes a branch to a stub that opens the io pages around the store, so it
+// stops costing a trap. r8 = variables, r10 = the bios's words. Uses r0-r7, r11,
+// r12; returns through r6.
+tryPatch:
+    mov r6, lr
+    ldr r0, [r8, #V_COUNTING]
+    cmp r0, #0
+    bxeq r6
+    ldr r1, [r10, #4]
+    and r1, r1, #0x1F
+    cmp r1, #0x10
+    bxeq r6 // user mode can't open the region
+    // game code only: main memory or the itcm, not the census's own
+    cmp r9, #0x02400000
+    bxhs r6
+    cmp r9, #0x02000000
+    bhs 1f
+    ldr r1, =0x01FF8000
+    cmp r9, r1
+    bxlo r6
+1:
+    sub r1, r9, r8
+    cmp r1, #(0x1000 + A_POOL)
+    blo 9f
+    sub r1, r1, #(0x1000 + A_POOL)
+    ldr r0, [r8, #V_SLOTS]
+    add r0, r0, r0, lsl #1
+    cmp r1, r0, lsl #3
+9:
+    bxlo r6
+    ldr r7, [r8, #V_OP]
+    // no sp, lr or pc anywhere in it: the stub uses the stack and lr
+    mov r0, r7, lsr #16
+    and r0, r0, #0xF
+    cmp r0, #13
+    bxhs r6
+    ldr r2, [r8, #V_KIND]
+    cmp r2, #3
+    bne 2f
+    tst r7, #0xE000
+    bxne r6
+    b 4f
+2:
+    mov r0, r7, lsr #12
+    and r0, r0, #0xF
+    cmp r2, #4
+    addeq r0, r0, #1 // strd's second register too
+    cmp r0, #13
+    bxhs r6
+    tst r7, #0x02000000 // str/strb with a register offset
+    bne 3f
+    and r0, r7, #0x0E000000
+    cmp r0, #0
+    bne 4f
+    tst r7, #0x00400000 // strh/strd with a register offset
+    bne 4f
+3:
+    and r0, r7, #0xF
+    cmp r0, #13
+    bxhs r6
+4:
+    // hot enough? traps per site, open addressing over 64 entries, 8 tries;
+    // a full run gives its first entry to the new site
+    add r3, r8, #(0x1000 + A_COUNT)
+    mov r0, r9, lsr #2
+    and r0, r0, #63
+    add r5, r3, r0, lsl #3
+    mov r4, #8
+7:
+    add r1, r3, r0, lsl #3
+    ldr r2, [r1]
+    cmp r2, r9
+    beq 8f
+    cmp r2, #0
+    beq 6f
+    add r0, r0, #1
+    and r0, r0, #63
+    subs r4, r4, #1
+    bne 7b
+    mov r1, r5
+6:
+    str r9, [r1]
+    mov r2, #0
+    str r2, [r1, #4]
+8:
+    ldr r2, [r1, #4]
+    add r2, r2, #1
+    str r2, [r1, #4]
+    cmp r2, #HOT_TRAPS
+    bxlo r6
+    // its stub: the one it had (an overlay put the site back), or a free one.
+    // r4 = slots left, r5 = the slot, r3 = what its last word is for this site
+    ldr r4, [r8, #V_SLOTS]
+    add r5, r8, #(0x1000 + A_POOL)
+    sub r3, r9, r5
+    sub r3, r3, #24 // (site + 4) - (slot + 20 + 8)
+5:
+    subs r4, r4, #1
+    bmi 4f
+    mov r0, r3, asr #2
+    bic r0, r0, #0xFF000000
+    orr r0, r0, #0xEA000000
+    ldr r1, [r5, #20]
+    cmp r1, r0
+    ldrne r1, [r5]
+    cmpne r1, #0
+    beq 6f
+    add r5, r5, #24
+    sub r3, r3, #24
+    b 5b
+4:
+    ldr r0, [r8, #V_PATCHFAIL]
+    add r0, r0, #1
+    str r0, [r8, #V_PATCHFAIL]
+    bx r6
+6:
+    // the stub: str lr,[sp,#-16]! / bl open / the store / bl close / ldr lr,[sp],#16 / b site+4
+    ldr r0, =0xE52DE010
+    str r0, [r5]
+    adr r1, shOpen
+    sub r0, r1, r5
+    sub r0, r0, #12
+    mov r0, r0, asr #2
+    bic r0, r0, #0xFF000000
+    orr r0, r0, #0xEB000000
+    str r0, [r5, #4]
+    bic r0, r7, #0xF0000000
+    orr r0, r0, #0xE0000000
+    str r0, [r5, #8]
+    adr r1, shClose
+    sub r0, r1, r5
+    sub r0, r0, #20
+    mov r0, r0, asr #2
+    bic r0, r0, #0xFF000000
+    orr r0, r0, #0xEB000000
+    str r0, [r5, #12]
+    ldr r0, =0xE49DE010
+    str r0, [r5, #16]
+    add r1, r9, #4
+    sub r0, r1, r5
+    sub r0, r0, #28
+    mov r0, r0, asr #2
+    bic r0, r0, #0xFF000000
+    orr r0, r0, #0xEA000000
+    str r0, [r5, #20]
+    mcr p15, 0, r5, c7, c10, 1
+    add r1, r5, #20
+    mcr p15, 0, r1, c7, c10, 1
+    mov r0, #0
+    mcr p15, 0, r0, c7, c10, 4
+    mcr p15, 0, r5, c7, c5, 1
+    mcr p15, 0, r1, c7, c5, 1
+    // the site, under the store's own condition
+    sub r0, r5, r9
+    sub r0, r0, #8
+    mov r0, r0, asr #2
+    bic r0, r0, #0xFF000000
+    and r1, r7, #0xF0000000
+    orr r0, r0, r1
+    orr r0, r0, #0x0A000000
+    str r0, [r9]
+    mcr p15, 0, r9, c7, c10, 1
+    mov r0, #0
+    mcr p15, 0, r0, c7, c10, 4
+    mcr p15, 0, r9, c7, c5, 1
+    ldr r0, [r8, #V_PATCHED]
+    add r0, r0, #1
+    str r0, [r8, #V_PATCHED]
+    bx r6
+    .ltorg
+
+// The stubs' halves, on the 16 bytes the stub took below sp: +0 lr, +4 r0,
+// +8 cpsr, +12 the data permissions. Irqs stay masked while the region is open,
+// and close puts back the permissions open found, so a stub is harmless even
+// with the census gone.
+shOpen:
+    str r0, [sp, #4]
+    mrs r0, cpsr
+    str r0, [sp, #8]
+    orr r0, r0, #0xC0
+    msr cpsr_c, r0
+    mrc p15, 0, r0, c5, c0, 2
+    str r0, [sp, #12]
+shOpenOrr:
+    orr r0, r0, #0xF // region k's nibble, set at install
+shOpenEor:
+    eor r0, r0, #0xC // 0xF ^ 0xC = 3, full access
+    mcr p15, 0, r0, c5, c0, 2
+    ldr r0, [sp, #4]
+    bx lr
+shClose:
+    str r0, [sp, #4]
+    ldr r0, [sp, #12]
+    mcr p15, 0, r0, c5, c0, 2
+    ldr r0, [sp, #8]
+    msr cpsr_c, r0
+    ldr r0, [sp, #4]
+    bx lr
 
 // ---------------------------------------------------------------- registers
 // Leaves, r8 = variables, r10 = the bios's words. getReg: r0 = index -> value;

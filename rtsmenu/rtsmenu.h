@@ -15,7 +15,8 @@ typedef volatile u32 vu32;
 #define RTS_BASE                0x02100000
 #define RTS_STASH_SIZE          0x30000
 #define RTS_STATE_SIZE          0x500000
-#define CENSUS_SPACE_SIZE       0x1C00
+#define CENSUS_SPACE_SIZE       0x3C00
+#define CENSUS_ARRAYS_OFFSET    0x1000 // variables and code before, shadow, patch table and stubs after
 #define RTS_MENU_STATE_RESUME   0x4D534552 // 'RESM'
 #define RTS_MENU_STATE_EXIT     0x54495845 // 'EXIT'
 #define RTS_MENU_STATE_SDREAD   0x44524453 // 'SDRD'
@@ -120,6 +121,11 @@ static inline void dcFlushAll(void)
         for (u32 line = 0; line < 32; line++)
             asm volatile("mcr p15, 0, %0, c7, c14, 2" :: "r"((way << 30) | (line << 5)) : "memory");
     asm volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
+}
+
+static inline void icInvalidateAll(void)
+{
+    asm volatile("mcr p15, 0, %0, c7, c5, 0" :: "r"(0) : "memory");
 }
 
 static inline void dcInvalidateLine(const volatile void* p)
