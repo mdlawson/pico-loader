@@ -26,12 +26,262 @@ static const u16 sIoRanges[][2] =
     { 0x1000, 0x1070 },                   // display B
 };
 
+// ---------------------------------------------------------------- arm9 timers
+
+// The game's timers stop while the menu runs and go on from the same count when
+// it leaves, after a load from the state's. Their reloads can't be read: the
+// menu measures each by waiting for the timer to wrap and reading the count it
+// starts again from. Timers it can't measure (cascaded, or counting every bus
+// cycle, too fast to catch the wrap) keep running as before.
+#define REG_TMCNT(i)    ((vu16*)(0x04000100 + (i) * 4)) // [0] count / reload, [1] control
+#define REG_IF          (*(vu32*)0x04000214)
+#define REG_VCOUNT      (*(vu16*)0x04000006)
+#define IF_TIMERS       0x78
+
+static u32 sTimer[4];       // count | control << 16, as the menu found them
+static u16 sTimerReload[4];
+static u32 sTimerMeasured;  // bit per timer: stopped for the menu, reload known
+static u32 sTimerIf;        // IF's timer bits as the menu found them
+
+// The loaded state's, applied as the menu leaves.
+static u32 sLoadTimer[4];
+static u16 sLoadTimerReload[4];
+static u32 sLoadTimerMeasured;
+
+static int measureReload(int i, u16* reload)
+{
+    vu16* t = REG_TMCNT(i);
+    // a period in scanlines (2130 bus cycles), at 64, 256 or 1024 cycles a tick
+    static const u32 periodLines[4] = { 0, 1970, 7880, 31510 };
+    u32 limit = periodLines[t[1] & 3] + 300;
+    u32 lines = 0, n = 0;
+    u16 line = REG_VCOUNT;
+    u16 prev = t[0];
+    for (;;)
+    {
+        u16 v = t[0];
+        if (v < prev)
+        {
+            *reload = v;
+            return 1;
+        }
+        prev = v;
+        if ((++n & 255) == 0)
+        {
+            u16 l = REG_VCOUNT;
+            lines += (l + 263 - line) % 263;
+            line = l;
+            if (lines > limit)
+                return 0;
+        }
+    }
+}
+
+static void timersStop(void)
+{
+    sTimerIf = REG_IF & IF_TIMERS;
+    for (int i = 0; i < 4; i++)
+        sTimer[i] = *(vu32*)(0x04000100 + i * 4);
+    sTimerMeasured = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        u16 control = sTimer[i] >> 16;
+        if (!(control & 0x80) || (control & 4) || (control & 3) == 0)
+            continue;
+        if (measureReload(i, &sTimerReload[i]))
+            sTimerMeasured |= 1u << i;
+    }
+    for (int i = 0; i < 4; i++)
+        if (sTimerMeasured & (1u << i))
+            REG_TMCNT(i)[1] = (sTimer[i] >> 16) & ~0x80;
+}
+
+static void timerStart(int i, u32 timer, u16 reload)
+{
+    vu16* t = REG_TMCNT(i);
+    t[1] = (timer >> 16) & ~0x80;
+    t[0] = (u16)timer;
+    t[1] = timer >> 16; // counts on from there
+    t[0] = reload;      // and wraps to the reload
+}
+
+static void timersLeave(int loaded)
+{
+    // the overflows the measuring caused are not the game's
+    REG_IF = REG_IF & IF_TIMERS & ~sTimerIf & (sTimerMeasured << 3);
+    for (int i = 0; i < 4; i++)
+    {
+        if (!loaded)
+        {
+            if (sTimerMeasured & (1u << i))
+                timerStart(i, sTimer[i], sTimerReload[i]);
+        }
+        else if (sLoadTimerMeasured & (1u << i))
+            timerStart(i, sLoadTimer[i], sLoadTimerReload[i]);
+        else
+        {
+            // reload unknown: the count as the reload, then the control
+            vu16* t = REG_TMCNT(i);
+            if (sTimerMeasured & (1u << i))
+                t[1] = (sLoadTimer[i] >> 16) & ~0x80; // stopped by the menu: starts again below
+            t[0] = (u16)sLoadTimer[i];
+            t[1] = sLoadTimer[i] >> 16;
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 3d matrices
+
+// The geometry engine's matrices are write only, but the clip matrix (position
+// x projection) and the vector matrix can be read. With the other one set to
+// identity for a moment (pushed and popped around it), the clip matrix is the
+// projection or the position matrix alone. Games that set their projection once
+// per scene need it back after a load. The matrix mode is found from which
+// stack level a push moves.
+#define REG_GXSTAT      (*(vu32*)0x04000600)
+#define REG_CLIPMTX     ((vs32*)0x04000640)
+#define REG_VECMTX      ((vs32*)0x04000680)
+#define GX_MTX_MODE     (*(vu32*)0x04000440)
+#define GX_MTX_PUSH     (*(vu32*)0x04000444)
+#define GX_MTX_POP      (*(vu32*)0x04000448)
+#define GX_MTX_IDENTITY (*(vu32*)0x04000454)
+#define GX_MTX_LOAD44   (*(vu32*)0x04000458)
+#define GXSTAT_BUSY     ((1u << 27) | (1u << 14)) // geometry engine, matrix stack
+#define GXSTAT_ERROR    (1u << 15)
+#define POS_LEVEL(st)   (((st) >> 8) & 0x1F)
+#define PROJ_LEVEL(st)  (((st) >> 13) & 1)
+typedef int32_t s32;
+typedef volatile int32_t vs32;
+
+typedef struct
+{
+    s32 proj[16], pos[16], vec[9];
+    u32 mode, stat, valid;
+} gx_t;
+static gx_t sGx;        // as the menu found them
+static gx_t sLoadGx;    // the loaded state's
+
+static int gxIdle(void)
+{
+    for (u32 i = 0; i < 0x100000; i++)
+        if (!(REG_GXSTAT & GXSTAT_BUSY))
+            return 1;
+    return 0;
+}
+
+static void readClip(s32* out)
+{
+    gxIdle();
+    for (int i = 0; i < 16; i++)
+        out[i] = REG_CLIPMTX[i];
+}
+
+static void gxSave(void)
+{
+    sGx.valid = 0;
+    // only between frames' commands: nothing queued or running
+    if (!gxIdle() || !(REG_GXSTAT & (1u << 26)))
+        return;
+    u32 st = REG_GXSTAT;
+    sGx.stat = st;
+    if (st & GXSTAT_ERROR)
+        return;
+    // the mode: a push moves the projection level (0), the position level (1 or
+    // 2) or neither (3, the texture stack); a full stack says so with its error
+    GX_MTX_PUSH = 0;
+    gxIdle();
+    u32 after = REG_GXSTAT;
+    u32 mode;
+    if (PROJ_LEVEL(after) != PROJ_LEVEL(st) || ((after & GXSTAT_ERROR) && PROJ_LEVEL(st)))
+        mode = 0;
+    else if (POS_LEVEL(after) != POS_LEVEL(st) || ((after & GXSTAT_ERROR) && POS_LEVEL(st) == 31))
+        mode = 2;
+    else
+        mode = 3;
+    if (!(after & GXSTAT_ERROR))
+        GX_MTX_POP = 1;
+    REG_GXSTAT = GXSTAT_ERROR; // acknowledged
+    for (int i = 0; i < 9; i++)
+        sGx.vec[i] = REG_VECMTX[i];
+    if (mode == 2)
+    {
+        // 1 or 2: whether identity in this mode changes the vector matrix too
+        GX_MTX_PUSH = 0;
+        GX_MTX_IDENTITY = 0;
+        gxIdle();
+        for (int i = 0; i < 9; i++)
+            if (REG_VECMTX[i] != sGx.vec[i])
+                break;
+            else if (i == 8)
+                mode = 1; // unchanged (or it was identity already: either does)
+        GX_MTX_POP = 1;
+    }
+    sGx.mode = mode;
+    // the projection: clip with the position matrix at identity
+    if (POS_LEVEL(st) >= 31)
+        return;
+    GX_MTX_MODE = 1;
+    GX_MTX_PUSH = 0;
+    GX_MTX_IDENTITY = 0;
+    readClip(sGx.proj);
+    GX_MTX_POP = 1;
+    // the position matrix: clip with the projection at identity, then the
+    // projection back from what was just read
+    GX_MTX_MODE = 0;
+    GX_MTX_IDENTITY = 0;
+    readClip(sGx.pos);
+    for (int i = 0; i < 16; i++)
+        GX_MTX_LOAD44 = sGx.proj[i];
+    GX_MTX_MODE = sGx.mode;
+    gxIdle();
+    sGx.valid = !(REG_GXSTAT & GXSTAT_ERROR);
+    REG_GXSTAT = GXSTAT_ERROR;
+}
+
+static void gxLoad(const gx_t* g)
+{
+    if (!g->valid || !gxIdle())
+        return;
+    // the stack levels: what the state had pushed, with these matrices (the
+    // pushed ones themselves can't be read)
+    GX_MTX_MODE = 0;
+    for (int i = 0; i < 16; i++)
+        GX_MTX_LOAD44 = g->proj[i];
+    GX_MTX_MODE = 2; // position and vector: the vector one first, as a 4x4
+    static const u8 vec44[16] = { 0, 1, 2, 16, 3, 4, 5, 16, 6, 7, 8, 16, 16, 16, 16, 17 };
+    for (int i = 0; i < 16; i++)
+        GX_MTX_LOAD44 = vec44[i] == 16 ? 0 : vec44[i] == 17 ? 0x1000 : g->vec[vec44[i]];
+    GX_MTX_MODE = 1;
+    for (int i = 0; i < 16; i++)
+        GX_MTX_LOAD44 = g->pos[i];
+    gxIdle();
+    u32 now = REG_GXSTAT;
+    GX_MTX_MODE = 2;
+    for (u32 l = POS_LEVEL(now); l > POS_LEVEL(g->stat); l--)
+        GX_MTX_POP = 1;
+    for (u32 l = POS_LEVEL(now); l < POS_LEVEL(g->stat); l++)
+        GX_MTX_PUSH = 0;
+    GX_MTX_MODE = 0;
+    if (PROJ_LEVEL(now) && !PROJ_LEVEL(g->stat))
+        GX_MTX_POP = 1;
+    else if (!PROJ_LEVEL(now) && PROJ_LEVEL(g->stat))
+        GX_MTX_PUSH = 0;
+    GX_MTX_MODE = g->mode;
+    gxIdle();
+    REG_GXSTAT = GXSTAT_ERROR;
+}
+
 // Before the menu changes anything.
 void stateTakeIo(void)
 {
+    timersStop();
+    gxSave();
     for (u32 i = 0; i < sizeof(sIoRanges) / sizeof(sIoRanges[0]); i++)
         for (u32 offset = sIoRanges[i][0]; offset < sIoRanges[i][1]; offset += 4)
             sIoDump[offset / 4] = *(vu32*)(0x04000000 + offset);
+    // the timers as the game had them, not as the menu stopped them
+    for (int i = 0; i < 4; i++)
+        sIoDump[0x100 / 4 + i] = sTimer[i];
 }
 
 // ---------------------------------------------------------------- arm7 commands
@@ -264,6 +514,9 @@ static void buildHeader(state_header_t* h, void* block)
     memcpy(h->fifo9, &sFifo9[1], 16 * 4);
     h->fifo7Count = sFifo7[0] <= 16 ? sFifo7[0] : 0;
     memcpy(h->fifo7, &sFifo7[1], 16 * 4);
+    memcpy(h->timer9, sTimer, sizeof(sTimer));
+    memcpy(h->timerReload9, sTimerReload, sizeof(sTimerReload));
+    h->timerMeasured9 = sTimerMeasured;
 }
 
 // ---------------------------------------------------------------- save
@@ -296,6 +549,16 @@ const char* stateSave(void* block, int slot, void (*progress)(u32 done, u32 tota
     // the arm7's registers and what its stub kept of the game's
     memset(__scratch, 0, STATE_ITCM - STATE_ARM7_IO);
     command(RTS_MENU_STATE_ARM7_SAVE, 0, (u32)__scratch, 0);
+    {
+        state_extra_t* x = (state_extra_t*)(__scratch + (STATE_EXTRA - STATE_ARM7_IO));
+        x->magic = STATE_EXTRA_MAGIC;
+        memcpy(x->gxProj, sGx.proj, sizeof(sGx.proj));
+        memcpy(x->gxPos, sGx.pos, sizeof(sGx.pos));
+        memcpy(x->gxVec, sGx.vec, sizeof(sGx.vec));
+        x->gxMode = sGx.mode;
+        x->gxStat = sGx.stat;
+        x->gxValid = sGx.valid;
+    }
     STEP(writeState(STATE_ARM7_IO, (u32)__scratch, STATE_ITCM - STATE_ARM7_IO));
 
     STEP(writeStateFromArm9(STATE_ITCM, (const volatile void*)0x01FF8000, 0x8000));
@@ -397,7 +660,7 @@ const char* stateCheck(void* block)
     u32 gameCode = cart[12] | (cart[13] << 8) | (cart[14] << 16) | ((u32)cart[15] << 24);
     if (sHeader.magic != STATE_MAGIC)
         return "slot 1 is empty";
-    if (sHeader.version != STATE_VERSION && sHeader.version != 2)
+    if (sHeader.version < 2 || sHeader.version > STATE_VERSION)
         return "older format, save again";
     if (sHeader.gameCode != gameCode)
         return "from another game";
@@ -434,7 +697,6 @@ static const u16 sIoRestore[][2] =
     { 0x008, 8 }, { 0x048, 4 }, { 0x050, 2 }, { 0x060, 4 },     // BGxCNT, WININ/OUT, BLDCNT, DISP3DCNT
     { 0x1008, 8 }, { 0x1048, 4 }, { 0x1050, 2 },                // the same of engine B
     { 0x0E0, 16 },                                              // dma fill values
-    { 0x100, 16 },                                              // timers: the count as reload, then the control
     { 0x280, 2 }, { 0x290, 16 },                                // DIVCNT, numerator, denominator: computes again
     { 0x2B0, 2 }, { 0x2B8, 8 },                                 // SQRTCNT, parameter: the same
     { 0x210, 4 },                                               // IE
@@ -499,7 +761,10 @@ void stateLeave(void)
     fifoSendFromArm9(&sFifo7[1], sFifo7[0] <= 16 ? sFifo7[0] : 0);
 
     if (!sLoaded)
+    {
+        timersLeave(0);
         return;
+    }
     sLoaded = 0;
     for (int ch = 0; ch < 4; ch++)
     {
@@ -520,6 +785,8 @@ void stateLeave(void)
         dma[1] = sDma[ch][1];
         dma[2] = control;
     }
+    gxLoad(&sLoadGx);
+    timersLeave(1);
     if (gCheckOnLeave)
     {
         gCheckOnLeave = 0;
@@ -566,7 +833,7 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     restoreMainRam(keep, 0, &mainSteps, 0);
     // arm7 3, shared wram 2, tcms 2, palette and oam 2, vram 9, main ram,
     // stash 2 per part, io 1
-    const u32 total = 18 + mainSteps + 2 * (RTS_STASH_SIZE / SCRATCH_SIZE) + 1;
+    const u32 total = 19 + mainSteps + 2 * (RTS_STASH_SIZE / SCRATCH_SIZE) + 1;
     u32 done = 0;
     *broken = 1; // from here on the game's memory changes
 #define STEP(x) do { if (!(x)) return "read failed"; progress(++done, total); } while (0)
@@ -625,6 +892,24 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
         STEP(writeStash(part, (u32)__scratch, SCRATCH_SIZE));
     }
 
+    // version 4's extra sector
+    sLoadGx.valid = 0;
+    if (h->version >= 4)
+    {
+        STEP(readState(STATE_EXTRA, (u32)__scratch, 512));
+        const state_extra_t* x = (const state_extra_t*)__scratch;
+        if (x->magic == STATE_EXTRA_MAGIC)
+        {
+            memcpy(sLoadGx.proj, x->gxProj, sizeof(sLoadGx.proj));
+            memcpy(sLoadGx.pos, x->gxPos, sizeof(sLoadGx.pos));
+            memcpy(sLoadGx.vec, x->gxVec, sizeof(sLoadGx.vec));
+            sLoadGx.mode = x->gxMode & 3;
+            sLoadGx.stat = x->gxStat;
+            sLoadGx.valid = x->gxValid == 1;
+        }
+    }
+    else
+        progress(++done, total);
     // registers: the screen ones go back as the menu leaves
     STEP(readState(STATE_ARM9_IO, (u32)__scratch, STATE_ARM7_IO - STATE_ARM9_IO));
     for (u32 i = 0; i < sizeof(sIoRestore) / sizeof(sIoRestore[0]); i++)
@@ -633,6 +918,11 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     for (int ch = 0; ch < 4; ch++)
         for (int i = 0; i < 3; i++)
             sDma[ch][i] = *(u32*)(__scratch + 0xB0 + ch * 12 + i * 4);
+    // timers: as the menu leaves; older states have no reloads
+    for (int i = 0; i < 4; i++)
+        sLoadTimer[i] = h->version >= 4 ? h->timer9[i] : *(u32*)(__scratch + 0x100 + i * 4);
+    memcpy(sLoadTimerReload, h->timerReload9, sizeof(sLoadTimerReload));
+    sLoadTimerMeasured = h->version >= 4 ? h->timerMeasured9 & 0xF : 0;
     sLoaded = 1;
     // the loaded session's fifo words replace the running one's
     sFifo9[0] = h->fifo9Count <= 16 ? h->fifo9Count : 0;

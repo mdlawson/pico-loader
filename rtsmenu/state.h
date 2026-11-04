@@ -8,7 +8,8 @@
 #include <stdint.h>
 
 #define STATE_MAGIC             0x53545250 // 'PRTS'
-#define STATE_VERSION           3 // 2: with the arm7 context; 3: ipc fifo words, more arm7 registers
+#define STATE_VERSION           4 // 2: with the arm7 context; 3: ipc fifo words, more arm7 registers;
+                                  // 4: the arm9 timers' counts and measured reloads
 
 #define STATE_HEADER            0x000000 // state_header_t, 0x200
 #define STATE_ARM9_IO           0x000200 // 0x1100: 0x04000000-0x04000FFF, then 0x04001000-0x040010FF;
@@ -16,6 +17,7 @@
 #define STATE_ARM9_IO_SIZE      0x1100
 #define STATE_ARM7_IO           0x001400 // 0x400: the arm7 context, ARM7_CTX_* below
 #define ARM7_CTX_SIZE           0x100
+#define STATE_EXTRA             0x001800 // 0x200, version 4: state_extra_t
 #define STATE_ITCM              0x004000 // 0x8000, read at 0x01FF8000
 #define STATE_DTCM              0x00C000 // 0x4000, read at the dtcm base
 #define STATE_PALETTE           0x010000 // 0x800, 0x05000000
@@ -77,9 +79,34 @@ typedef struct
     uint32_t fifo9[16];
     uint32_t fifo7Count;        // in the arm7's receive fifo (sent by the arm9)
     uint32_t fifo7[16];
+
+    // version 4: the arm9 timers as the menu found them (count | control << 16),
+    // stopped while it ran; their reloads where it could measure them
+    uint32_t timer9[4];
+    uint16_t timerReload9[4];
+    uint32_t timerMeasured9;    // bit per timer: timerReload9 is valid
+
 } state_header_t;
 
+#define STATE_EXTRA_MAGIC       0x34585250 // 'PRX4'
+
+// What else version 4 keeps, in its own sector.
+typedef struct
+{
+    uint32_t magic;             // STATE_EXTRA_MAGIC when valid
+    // the geometry engine's current matrices (20.12 fixed point), read
+    // through the 3d result registers; valid when gxValid is 1
+    int32_t gxProj[16];
+    int32_t gxPos[16];
+    int32_t gxVec[9];           // 3x3
+    uint32_t gxMode;            // MTX_MODE as found
+    uint32_t gxStat;            // GXSTAT as found: the stack levels
+    uint32_t gxValid;
+} state_extra_t;
+
 _Static_assert(sizeof(state_header_t) <= 0x200, "state header is one sector");
+_Static_assert(sizeof(state_extra_t) <= 0x200, "extra is one sector");
+_Static_assert(STATE_ARM7_IO + 0x400 <= STATE_EXTRA, "extra after the arm7 context");
 _Static_assert(STATE_ARM9_IO + STATE_ARM9_IO_SIZE <= STATE_ARM7_IO, "io dump fits");
 _Static_assert(STATE_VRAM + 0xA4000 <= STATE_MAIN_RAM, "vram fits");
 _Static_assert(STATE_MAIN_RAM + 0x400000 == STATE_END, "main ram ends the file");
