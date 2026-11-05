@@ -262,45 +262,41 @@ copied:
     ldmfd sp!, {r4-r8}
     ldmfd sp!, {r0-r2, pc}
 
+// The overlays' sites. Overlays that go in the same memory can't be in at once,
+// so the loader gives them the same stub slots and an overlay's stubs are made
+// here as it comes in. shadow_groups: per overlay with sites
+//     id, its records, how many, its first slot
+// and a record per site:
+//     the site | type << 28, the halfwords found there (low first)
+// type 0 arm, 1 thumb, 2 thumb pair, 4 thumb with the one before; 3 a copy
+// call, whose stub is made at boot: one more word, the halfwords to put. Each
+// record but a copy's takes the next slot, used or not.
+
 // From the overlay hook (ShadowOverlayHook.s), as an overlay has loaded: r0 = its
-// table entry. Puts in the overlay's patches the loader made at boot, each a
-// halfword: address, then the halfword it should find | the one to put << 16.
+// table entry.
 .global shadow_overlay_loaded
 .type shadow_overlay_loaded, %function
 shadow_overlay_loaded:
-    push {r4-r6}
+    push {r4, r5, lr}
     ldr r1, [r0] // the overlay's id
-    ldr r2, shadow_groups
-    ldr r3, shadow_group_count
+    ldr r4, shadow_groups
+    ldr r5, shadow_group_count
 1:
-    subs r3, r3, #1
+    subs r5, r5, #1
     blt 9f
-    ldmia r2!, {r4-r6} // id, the patches, how many
-    cmp r4, r1
+    ldr r2, [r4]
+    cmp r2, r1
+    addne r4, r4, #16
     bne 1b
-2:
-    subs r6, r6, #1
-    blt 3f
-    ldmia r5!, {r2, r3} // the address, find | put << 16
-    ldrh r12, [r2]
-    mov r0, r3, lsl #16
-    cmp r12, r0, lsr #16
-    moveq r3, r3, lsr #16
-    strheq r3, [r2]
-    mcreq p15, 0, r2, c7, c10, 1 // the line out to memory, for the code fetch
-    b 2b
-3:
-    // the instruction cache, as the patched code may have been there before
-    mov r0, #0
-    mcr p15, 0, r0, c7, c5, 0
+    mov r0, r4
+    bl apply_group
 9:
-    pop {r4-r6}
-    bx lr
+    pop {r4, r5, pc}
 
 // From the exit combo's vblank hook, where no FS_StartOverlay hook went in:
-// keeps r4-r11. An overlay's patches go in once all of its patched halfwords
-// read as either what the loader found or what it puts there: an overlay half
-// read in, or still compressed, is left for a later vblank.
+// keeps r4-r11. An overlay goes in once every site reads as found: one half
+// read in, or still compressed, is left for a later vblank, and a patched one
+// no longer reads as found.
 .global shadow_vblank
 .type shadow_vblank, %function
 shadow_vblank:
@@ -310,41 +306,170 @@ shadow_vblank:
 1:
     subs r5, r5, #1
     blt 9f
-    ldmia r4!, {r0-r2} // id, the patches, how many
-    // the first one still as found: the overlay came (back) since
-    ldmia r1, {r3, r12}
-    ldrh r0, [r3]
-    mov r8, r12, lsl #16
-    cmp r0, r8, lsr #16
-    bne 1b
-    mov r6, r1
-    mov r7, r2
+    ldmib r4, {r6, r7} // records, how many
+    cmp r7, #0
+    beq 8f
 2:
-    ldmia r6!, {r3, r12}
-    ldrh r0, [r3]
-    mov r8, r12, lsl #16
-    cmp r0, r8, lsr #16
-    cmpne r0, r12, lsr #16
-    bne 1b
+    ldmia r6!, {r0, r1}
+    mov r2, r0, lsr #28
+    cmp r2, #3
+    addeq r6, r6, #4
+    bic r0, r0, #0xF0000000
+    ldrh r2, [r0]
+    ldrh r3, [r0, #2]
+    orr r2, r2, r3, lsl #16
+    cmp r2, r1
+    bne 8f
     subs r7, r7, #1
     bne 2b
-3:
-    ldmia r1!, {r3, r12}
-    ldrh r0, [r3]
-    mov r8, r12, lsl #16
-    cmp r0, r8, lsr #16
-    moveq r12, r12, lsr #16
-    strheq r12, [r3]
-    mcreq p15, 0, r3, c7, c10, 1
-    subs r2, r2, #1
-    bne 3b
-    mov r0, #0
-    mcr p15, 0, r0, c7, c10, 4 // drain the write buffer
-    mcr p15, 0, r0, c7, c5, 0 // and the instruction cache
+    mov r0, r4
+    bl apply_group
+8:
+    add r4, r4, #16
     b 1b
 9:
-    pop {r4-r8, lr}
+    pop {r4-r8, pc}
+
+// r0 = a group: each site still as found gets its stub and its branch.
+apply_group:
+    push {r4-r11, lr}
+    ldmib r0, {r4, r5, r6} // records, how many, the first slot
+1:
+    subs r5, r5, #1
+    blt 8f
+    ldmia r4!, {r7, r8} // the site | type << 28, the halfwords found
+    mov r9, r7, lsr #28
+    bic r7, r7, #0xF0000000
+    cmp r9, #3
+    ldreq r10, [r4], #4 // a copy's: the halfwords to put
+    ldrh r0, [r7]
+    ldrh r1, [r7, #2]
+    orr r0, r0, r1, lsl #16
+    cmp r0, r8
+    bne 7f
+    cmp r9, #3
+    beq 5f
+    bl build_stub
+    mcr p15, 0, r6, c7, c10, 1 // the slot's line out to memory, for the code fetch
+5:
+    strh r10, [r7]
+    mov r10, r10, lsr #16
+    strh r10, [r7, #2]
+    mcr p15, 0, r7, c7, c10, 1
+    add r0, r7, #2
+    mcr p15, 0, r0, c7, c10, 1
+7:
+    cmp r9, #3
+    addne r6, r6, #16
+    b 1b
+8:
+    mov r0, #0
+    mcr p15, 0, r0, c7, c10, 4 // drain the write buffer
+    mcr p15, 0, r0, c7, c5, 0 // the instruction cache, as the code may have been there before
+    pop {r4-r11, pc}
+
+// r6 = the slot, r7 = the site, r8 = the halfwords found, r9 = the type -> the
+// stub in the slot (as ShadowInstall.cpp makes the static ones), r10 = the
+// halfwords for the site.
+build_stub:
+    push {lr}
+    cmp r9, #0
+    bne 2f
+    // arm: the store / str lr, [sp, #-8]! / bl shadow_record / the site + 4
+    str r8, [r6]
+    ldr r0, =0xE52DE008
+    str r0, [r6, #4]
+    adrl r1, shadow_record
+    add r0, r6, #16
+    sub r0, r1, r0
+    mov r0, r0, lsl #6
+    mov r0, r0, lsr #8
+    orr r0, r0, #0xEB000000
+    str r0, [r6, #8]
+    add r0, r7, #4
+    str r0, [r6, #12]
+    // the site: b<its condition> to the slot
+    add r0, r7, #8
+    sub r0, r6, r0
+    mov r0, r0, lsl #6
+    mov r0, r0, lsr #8
+    and r10, r8, #0xF0000000
+    orr r10, r10, #0x0A000000
+    orr r10, r10, r0
+    pop {pc}
+2:
+    adrl r1, shadow_record_thumb
+    cmp r9, #4
+    beq 4f
+    // push {lr} / the store / blx record / the next (/ blx record) / pop {pc}
+    mov r0, r8, lsl #16
+    orr r0, r0, #0xB500
+    str r0, [r6]
+    add r0, r6, #4
+    mov r2, #1
+    bl thumb_call
+    str r0, [r6, #4]
+    mov r3, r8, lsr #16
+    cmp r9, #1
+    bne 3f
+    orr r0, r3, #0xBD000000
+    str r0, [r6, #8]
+    mov r0, #0
+    str r0, [r6, #12]
+    b 6f
+3:
+    add r0, r6, #10
+    mov r2, #1
+    bl thumb_call
+    orr r2, r3, r0, lsl #16
+    str r2, [r6, #8]
+    mov r0, r0, lsr #16
+    orr r0, r0, #0xBD000000
+    str r0, [r6, #12]
+    b 6f
+4:
+    // push {lr} / the one before / the store / blx record / pop {pc}
+    mov r0, r8, lsl #16
+    orr r0, r0, #0xB500
+    str r0, [r6]
+    add r0, r6, #6
+    mov r2, #1
+    bl thumb_call
+    mov r3, r8, lsr #16
+    orr r2, r3, r0, lsl #16
+    str r2, [r6, #4]
+    mov r0, r0, lsr #16
+    orr r0, r0, #0xBD000000
+    str r0, [r6, #8]
+    mov r0, #0
+    str r0, [r6, #12]
+6:
+    // the site: bl to the slot
+    mov r0, r7
+    mov r1, r6
+    mov r2, #0
+    bl thumb_call
+    mov r10, r0
+    pop {pc}
+
+// r0 = from, r1 = to, r2 = 1 for blx (to arm) -> r0 = the two halfwords
+// (first | second << 16). Keeps r1, r3.
+thumb_call:
+    add r0, r0, #4
+    cmp r2, #0
+    bicne r0, r0, #3
+    sub r0, r1, r0
+    mov r12, r0, lsl #9
+    mov r12, r12, lsr #21
+    orr r12, r12, #0xF000
+    mov r0, r0, lsl #20
+    mov r0, r0, lsr #21
+    cmp r2, #0
+    orreq r0, r0, #0xF800
+    orrne r0, r0, #0xE800
+    orr r0, r12, r0, lsl #16
     bx lr
+.ltorg
 
 .global shadow_groups
 shadow_groups:

@@ -21,26 +21,37 @@ extern "C" u32 shadow_group_count;
 #define SHADOW_STUBS_OFFSET_FIELD   0x0C
 #define SHADOW_COUNT_FIELD          0x08
 #define SHADOW_STUB_SIZE            16
-#define SHADOW_MAX_SITES            512
+#define SHADOW_MAX_SITES            768
 #define SHADOW_MAX_COPIES           64
 #define SHADOW_MAX_OVERLAYS         128
 #define SHADOW_MAX_REGION2          8
 
 using shadow_scan::CopySite;
 
-// What gets a stub. Words all: the loader runs from vram, which takes no byte writes.
+// What gets a stub. Words and halfwords only: the loader runs from vram, which
+// takes no byte writes.
 enum : u32 { ENTRY_ARM = 0, ENTRY_THUMB = 1, ENTRY_THUMB2 = 2, ENTRY_COPY = 3, ENTRY_THUMB_PREV = 4 };
 struct Entry
 {
-    u32 type;
     u32 initial;   // where the loader patches
     u32 final;     // where it runs
     u32 callee;    // copies: the routine's final address, bit 0 for thumb
-    u32 link;
-    u32 kind;
-    u32 overlay;   // 0: the static arm9; else the overlay's id + 1, patched as it loads
     u32 orig;      // the word at initial (two halfwords for thumb)
+    u16 overlay;   // 0: the static arm9; else the overlay's id + 1, patched as it loads
+    u16 type;
+    u16 link;
+    u16 kind;
 };
+
+// The overlays with sites: where each goes, for the stub slots they share.
+struct OverlaySpan
+{
+    u32 overlay;   // id + 1
+    u32 ram;
+    u32 size;
+};
+static OverlaySpan sSpans[SHADOW_MAX_OVERLAYS];
+static u32 sSpanCount;
 
 static Entry sEntries[SHADOW_MAX_SITES];
 static u32 sEntryCount;
@@ -362,6 +373,7 @@ bool ShadowInstall::WantsOverlays()
     sOverlaysWithSites = 0;
     sStaticFromOverlays = 0;
     sOverlayBase = sEntryCount;
+    sSpanCount = 0;
     return sRegion2Ok; // through the FS_StartOverlay hook, or else from vblank
 }
 
@@ -383,7 +395,7 @@ void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
             goto clear;
         ((uncompress_func_t)sUncompress)((void*)end);
     }
-    if (sRegion2Ok && sEntryCount < SHADOW_MAX_SITES)
+    if (sRegion2Ok && sEntryCount < SHADOW_MAX_SITES && sSpanCount < SHADOW_MAX_OVERLAYS)
     {
         sBlockStart = ram;
         sBlockSize = ramSize;
@@ -393,7 +405,11 @@ void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
         u32 before = sEntryCount;
         ScanBlocks(blocks, 2, id + 1, nullptr);
         if (sEntryCount != before)
+        {
             sOverlaysWithSites++;
+            if (sSpanCount < SHADOW_MAX_OVERLAYS)
+                sSpans[sSpanCount++] = { id + 1, ram, ramSize };
+        }
         sOverlayEntries += sEntryCount - before;
     }
 clear:
@@ -405,7 +421,8 @@ clear:
 // pass added to sEntries, after three counters and the entry count. It holds
 // only for this loader (its code) and this static arm9 scan result.
 extern "C" u8 __text_start[], __text_end[];
-static_assert(sizeof(Entry) == 32, "the cache writes entries as 8 words");
+static_assert(sizeof(Entry) == 24, "the cache writes entries as 6 words");
+#define ENTRY_WORDS (sizeof(Entry) / 4)
 
 u32 ShadowInstall::CacheKey()
 {
@@ -422,14 +439,15 @@ u32 ShadowInstall::CacheKey()
     mix(sAutoloadFrom);
     mix(sOverlayBase);
     for (u32 i = 0; i < sOverlayBase; i++)
-        for (u32 k = 0; k < 8; k++)
+        for (u32 k = 0; k < ENTRY_WORDS; k++)
             mix(((const u32*)&sEntries[i])[k]);
     return h | 1;
 }
 
+// Words: the three counters, the entry count, the span count, the entries, the spans.
 u32 ShadowInstall::CacheWords()
 {
-    return 4 + (sEntryCount - sOverlayBase) * 8;
+    return 5 + (sEntryCount - sOverlayBase) * ENTRY_WORDS + sSpanCount * 3;
 }
 
 u32 ShadowInstall::CacheWord(u32 i)
@@ -440,36 +458,48 @@ u32 ShadowInstall::CacheWord(u32 i)
         case 1: return sOverlayEntries;
         case 2: return sOverlaysWithSites;
         case 3: return sEntryCount - sOverlayBase;
+        case 4: return sSpanCount;
     }
-    i -= 4;
-    return ((const u32*)&sEntries[sOverlayBase + i / 8])[i % 8];
+    i -= 5;
+    u32 entryWords = (sEntryCount - sOverlayBase) * ENTRY_WORDS;
+    if (i < entryWords)
+        return ((const u32*)&sEntries[sOverlayBase])[i];
+    i -= entryWords;
+    return ((const u32*)sSpans)[i];
 }
 
 bool ShadowInstall::CacheLoad(u32 words, u32 (*next)())
 {
-    u32 head[4] = { 0, 0, 0, 0 };
-    u32 count = 0;
-    bool ok = sRegion2Ok && words >= 4;
+    u32 head[5] = { 0, 0, 0, 0, 0 };
+    u32 count = 0, spans = 0;
+    bool ok = sRegion2Ok && words >= 5;
     for (u32 i = 0; i < words; i++)
     {
         u32 w = next();
         if (!ok)
             continue;
-        if (i < 4)
+        if (i < 5)
         {
             head[i] = w;
-            if (i == 3)
+            if (i == 4)
             {
-                count = w;
-                ok = words == 4 + count * 8 && count <= SHADOW_MAX_SITES - sOverlayBase;
+                count = head[3];
+                spans = w;
+                ok = count <= SHADOW_MAX_SITES - sOverlayBase && spans <= SHADOW_MAX_OVERLAYS
+                    && words == 5 + count * ENTRY_WORDS + spans * 3;
             }
             continue;
         }
-        ((u32*)&sEntries[sOverlayBase])[i - 4] = w;
+        u32 k = i - 5;
+        if (k < count * ENTRY_WORDS)
+            ((u32*)&sEntries[sOverlayBase])[k] = w;
+        else
+            ((u32*)sSpans)[k - count * ENTRY_WORDS] = w;
     }
     if (!ok)
         return false;
     sEntryCount = sOverlayBase + count;
+    sSpanCount = spans;
     sStaticFromOverlays = head[0];
     sOverlayEntries = head[1];
     sOverlaysWithSites = head[2];
@@ -477,21 +507,103 @@ bool ShadowInstall::CacheLoad(u32 words, u32 (*next)())
     return true;
 }
 
-// After the stubs: the overlays' patches, a group (id, the patches, how many) per
-// overlay, then two halfword patches (address, find | put << 16) an entry.
-static u32 extraFor(u32 entries)
+// The space: this code, a fixed stub per static site and per overlay copy call,
+// the overlays' shared stub slots, a group per overlay (id, its records, how
+// many, its first slot), then the records (ShadowPatchCode.s): two words a site,
+// three for a copy call.
+struct Layout
 {
-    u32 overlayEntries = 0, groups = 0, last = 0;
-    for (u32 i = 0; i < entries; i++)
+    u32 fixed;        // fixed stubs
+    u32 slots;        // shared slots
+    u32 groups;
+    u32 recordBytes;
+    u32 slotStart[SHADOW_MAX_OVERLAYS + 1]; // per group, in slots
+    u32 size;         // all of it
+};
+static Layout sLayout;
+
+// Overlays left out of the space (their entries' overlay values), when it is short.
+static u32 sLeftOut[SHADOW_MAX_OVERLAYS];
+static u32 sLeftOutCount;
+
+static bool leftOut(u32 overlay)
+{
+    for (u32 i = 0; i < sLeftOutCount; i++)
+        if (sLeftOut[i] == overlay)
+            return true;
+    return false;
+}
+
+static bool spanOf(u32 overlay, u32& ram, u32& size)
+{
+    for (u32 i = 0; i < sSpanCount; i++)
+        if (sSpans[i].overlay == overlay)
+        {
+            ram = sSpans[i].ram;
+            size = sSpans[i].size;
+            return true;
+        }
+    return false;
+}
+
+// The layout of the first count entries. Two overlays share a slot only when
+// their memory overlaps: then they can't be in at once.
+static const Layout& layoutFor(u32 count)
+{
+    Layout& l = sLayout;
+    l.fixed = l.slots = l.groups = l.recordBytes = 0;
+    static u32 groupOverlay[SHADOW_MAX_OVERLAYS + 1], groupSlots[SHADOW_MAX_OVERLAYS + 1];
+    u32 last = 0;
+    for (u32 i = 0; i < count; i++)
     {
-        if (!sEntries[i].overlay)
+        const Entry& e = sEntries[i];
+        if (e.overlay && leftOut(e.overlay))
             continue;
-        overlayEntries++;
-        if (sEntries[i].overlay != last)
-            groups++;
-        last = sEntries[i].overlay;
+        if (!e.overlay || e.type == ENTRY_COPY)
+            l.fixed++;
+        if (!e.overlay)
+            continue;
+        if (e.overlay != last && l.groups <= SHADOW_MAX_OVERLAYS)
+        {
+            groupOverlay[l.groups] = e.overlay;
+            groupSlots[l.groups] = 0;
+            l.groups++;
+        }
+        last = e.overlay;
+        l.recordBytes += e.type == ENTRY_COPY ? 12 : 8;
+        if (e.type != ENTRY_COPY)
+            groupSlots[l.groups - 1]++;
     }
-    return groups * 12 + overlayEntries * 16;
+    for (u32 g = 0; g < l.groups; g++)
+    {
+        u32 ram = 0, size = 0;
+        bool known = spanOf(groupOverlay[g], ram, size);
+        u32 n = groupSlots[g];
+        // the lowest start where every group already there it would share with overlaps it
+        u32 best = l.slots;
+        for (u32 c = 0; c <= g; c++)
+        {
+            u32 start = c == 0 ? 0 : l.slotStart[c - 1] + groupSlots[c - 1];
+            if (start >= best)
+                continue;
+            bool ok = true;
+            for (u32 o = 0; o < g && ok; o++)
+            {
+                if (start >= l.slotStart[o] + groupSlots[o] || l.slotStart[o] >= start + n || n == 0 || groupSlots[o] == 0)
+                    continue;
+                u32 oram = 0, osize = 0;
+                ok = known && spanOf(groupOverlay[o], oram, osize) && oram < ram + size && ram < oram + osize;
+            }
+            if (ok)
+                best = start;
+        }
+        l.slotStart[g] = best;
+        if (best + n > l.slots)
+            l.slots = best + n;
+    }
+    u32 code = (SECTION_SIZE(patch_shadow) + 31) & ~31u;
+    l.size = code + (l.fixed + l.slots) * SHADOW_STUB_SIZE + l.groups * 16 + l.recordBytes;
+    return l;
 }
 
 u32 ShadowInstall::VblankRoutine()
@@ -503,8 +615,8 @@ u32 ShadowInstall::SpaceNeeded()
 {
     if (!sRegion2Ok || sEntryCount == 0)
         return 0;
-    u32 code = (SECTION_SIZE(patch_shadow) + 31) & ~31u;
-    return code + sEntryCount * SHADOW_STUB_SIZE + extraFor(sEntryCount);
+    sLeftOutCount = 0;
+    return layoutFor(sEntryCount).size;
 }
 
 static bool armBranch(u32 from, u32 to, u32& field)
@@ -535,11 +647,31 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
     u32 codeSize = (SECTION_SIZE(patch_shadow) + 31) & ~31u;
     if (size < codeSize + SHADOW_STUB_SIZE)
         return false;
+    // Short of space: overlays that don't fit are left out whole, from the last
+    // one back, as long as that helps (a later one may only share slots); then
+    // the static sites from the end.
+    sLeftOutCount = 0;
     u32 count = sEntryCount;
-    while (count && codeSize + count * SHADOW_STUB_SIZE + extraFor(count) > size)
+    for (u32 i = count; i-- > 0 && layoutFor(count).size > size;)
+    {
+        u32 overlay = sEntries[i].overlay;
+        if (!overlay || leftOut(overlay) || sLeftOutCount >= SHADOW_MAX_OVERLAYS)
+            continue;
+        sLeftOut[sLeftOutCount++] = overlay;
+    }
+    // put back the ones that fit after all, first to last
+    for (u32 k = sLeftOutCount; k-- > 0;)
+    {
+        u32 overlay = sLeftOut[k];
+        sLeftOut[k] = 0;
+        if (layoutFor(count).size > size)
+            sLeftOut[k] = overlay;
+    }
+    while (count && layoutFor(count).size > size)
         count--;
     if (count == 0)
         return false;
+    const Layout& l = layoutFor(count);
 
     memset(space, 0, size);
     memcpy(space, SECTION_START(patch_shadow), SECTION_SIZE(patch_shadow));
@@ -551,55 +683,36 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
     u32 copied[4] = { run((const void*)shadow_copied), run((const void*)shadow_filled8),
         run((const void*)shadow_filled16), run((const void*)shadow_filled32) };
 
-    // the overlays' groups and patches, after the stubs of all entries
-    u32 groupsOffset = codeSize + count * SHADOW_STUB_SIZE;
-    u32 groupCount = 0, lastOverlay = 0;
-    for (u32 i = 0; i < count; i++)
-        if (sEntries[i].overlay && sEntries[i].overlay != lastOverlay)
-        {
-            groupCount++;
-            lastOverlay = sEntries[i].overlay;
-        }
-    u32 patchesOffset = groupsOffset + groupCount * 12;
+    u32 slotsOffset = codeSize + l.fixed * SHADOW_STUB_SIZE;
+    u32 groupsOffset = slotsOffset + l.slots * SHADOW_STUB_SIZE;
+    u32 recordsOffset = groupsOffset + l.groups * 16;
     u32* groups = (u32*)((u8*)space + groupsOffset);
-    u32* patches = (u32*)((u8*)space + patchesOffset);
-    u32 groupsMade = 0, patchesMade = 0;
-    lastOverlay = 0;
+    u32* records = (u32*)((u8*)space + recordsOffset);
+    u32 recordWords = 0, group = 0, groupSlot = 0, lastOverlay = 0;
 
-    // the site's new halfwords: in place for the static arm9, as patches for an overlay
-    auto put = [&](const Entry& e, u32 value)
-    {
-        if (!e.overlay)
-        {
-            u16* h = (u16*)e.initial;
-            h[0] = value;
-            h[1] = value >> 16;
-            return;
-        }
-        if (e.overlay != lastOverlay)
-        {
-            groups[groupsMade * 3 + 0] = e.overlay - 1;
-            groups[groupsMade * 3 + 1] = runAddress + patchesOffset + patchesMade * 8;
-            groups[groupsMade * 3 + 2] = 0;
-            groupsMade++;
-            lastOverlay = e.overlay;
-        }
-        for (u32 k = 0; k < 2; k++)
-        {
-            patches[patchesMade * 2 + 0] = e.final + k * 2;
-            patches[patchesMade * 2 + 1] = ((e.orig >> (16 * k)) & 0xFFFF) | (((value >> (16 * k)) & 0xFFFF) << 16);
-            patchesMade++;
-            groups[(groupsMade - 1) * 3 + 2]++;
-        }
-    };
-
-    u32 made = 0, failed = 0;
+    u32 made = 0, fixedMade = 0, failed = 0, overlaySites = 0;
     for (u32 i = 0; i < count; i++)
     {
         const Entry& e = sEntries[i];
-        u32 stubOffset = codeSize + made * SHADOW_STUB_SIZE;
+        if (e.overlay && leftOut(e.overlay))
+            continue;
+        if (e.overlay && e.overlay != lastOverlay)
+        {
+            // a new group: its records from here, its slots where the layout put them
+            group = lastOverlay ? group + 1 : 0;
+            groups[group * 4 + 0] = e.overlay - 1;
+            groups[group * 4 + 1] = runAddress + recordsOffset + recordWords * 4;
+            groups[group * 4 + 2] = 0;
+            groups[group * 4 + 3] = runAddress + slotsOffset + l.slotStart[group] * SHADOW_STUB_SIZE;
+            groupSlot = 0;
+            lastOverlay = e.overlay;
+        }
+        bool fixed = !e.overlay || e.type == ENTRY_COPY;
+        u32 stubOffset = fixed ? codeSize + fixedMade * SHADOW_STUB_SIZE
+            : slotsOffset + (l.slotStart[group] + groupSlot) * SHADOW_STUB_SIZE;
         u32 stubRun = runAddress + stubOffset;
         u32* stub = (u32*)((u8*)space + stubOffset);
+        u32 value = 0;
         bool ok = false;
         if (e.type == ENTRY_ARM)
         {
@@ -607,11 +720,14 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
             u32 toStub, toRecord;
             if (armBranch(e.final, stubRun, toStub) && armBranch(stubRun + 8, record, toRecord))
             {
-                stub[0] = op;
-                stub[1] = 0xE52DE008; // str lr, [sp, #-8]!
-                stub[2] = 0xEB000000 | toRecord; // bl shadow_record
-                stub[3] = e.final + 4;
-                put(e, (op & 0xF0000000) | 0x0A000000 | toStub);
+                if (fixed)
+                {
+                    stub[0] = op;
+                    stub[1] = 0xE52DE008; // str lr, [sp, #-8]!
+                    stub[2] = 0xEB000000 | toRecord; // bl shadow_record
+                    stub[3] = e.final + 4;
+                }
+                value = (op & 0xF0000000) | 0x0A000000 | toStub;
                 ok = true;
             }
         }
@@ -623,20 +739,23 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
                 && thumbCall(stubRun + 4, recordThumb, true, rhi, rlo)
                 && thumbCall(stubRun + 10, recordThumb, true, r2hi, r2lo))
             {
-                u32 store = e.orig & 0xFFFF, next = e.orig >> 16;
-                stub[0] = 0xB500 | (store << 16);
-                stub[1] = rhi | (rlo << 16);
-                if (e.type == ENTRY_THUMB)
+                if (fixed)
                 {
-                    stub[2] = next | (0xBD00 << 16);
-                    stub[3] = 0;
+                    u32 store = e.orig & 0xFFFF, next = e.orig >> 16;
+                    stub[0] = 0xB500 | (store << 16);
+                    stub[1] = rhi | (rlo << 16);
+                    if (e.type == ENTRY_THUMB)
+                    {
+                        stub[2] = next | (0xBD00 << 16);
+                        stub[3] = 0;
+                    }
+                    else
+                    {
+                        stub[2] = next | (r2hi << 16);
+                        stub[3] = r2lo | (0xBD00 << 16);
+                    }
                 }
-                else
-                {
-                    stub[2] = next | (r2hi << 16);
-                    stub[3] = r2lo | (0xBD00 << 16);
-                }
-                put(e, hi | (lo << 16));
+                value = hi | (lo << 16);
                 ok = true;
             }
         }
@@ -646,12 +765,15 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
             u16 hi, lo, rhi, rlo;
             if (thumbCall(e.final, stubRun, false, hi, lo) && thumbCall(stubRun + 6, recordThumb, true, rhi, rlo))
             {
-                u32 prev = e.orig & 0xFFFF, store = e.orig >> 16;
-                stub[0] = 0xB500 | (prev << 16);
-                stub[1] = store | (rhi << 16);
-                stub[2] = rlo | (0xBD00 << 16);
-                stub[3] = 0;
-                put(e, hi | (lo << 16));
+                if (fixed)
+                {
+                    u32 prev = e.orig & 0xFFFF, store = e.orig >> 16;
+                    stub[0] = 0xB500 | (prev << 16);
+                    stub[1] = store | (rhi << 16);
+                    stub[2] = rlo | (0xBD00 << 16);
+                    stub[3] = 0;
+                }
+                value = hi | (lo << 16);
                 ok = true;
             }
         }
@@ -674,7 +796,7 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
                     u16 hi, lo;
                     if (thumbCall(e.final, stubRun, true, hi, lo))
                     {
-                        put(e, hi | (lo << 16));
+                        value = hi | (lo << 16);
                         ok = true;
                     }
                 }
@@ -686,20 +808,43 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
                     {
                         u32 cond = (op >> 28) == 0xF ? 0xE0000000 : op & 0xF0000000; // blx imm: always
                         bool call = e.link == shadow_scan::LINK_ARM_CALL;
-                        put(e, cond | (call ? 0x0B000000 : 0x0A000000) | toStub);
+                        value = cond | (call ? 0x0B000000 : 0x0A000000) | toStub;
                         ok = true;
                     }
                 }
             }
         }
-        if (ok)
-            made++;
-        else
+        if (!ok)
         {
             failed++;
-            memset(stub, 0, SHADOW_STUB_SIZE);
+            if (fixed)
+                memset(stub, 0, SHADOW_STUB_SIZE);
+            continue;
         }
+        made++;
+        if (!e.overlay)
+        {
+            // the static arm9: in place now
+            u16* h = (u16*)e.initial;
+            h[0] = value;
+            h[1] = value >> 16;
+            fixedMade++;
+            continue;
+        }
+        // an overlay's: a record, for when it comes in
+        records[recordWords++] = e.final | (e.type << 28);
+        records[recordWords++] = e.orig;
+        if (e.type == ENTRY_COPY)
+        {
+            records[recordWords++] = value;
+            fixedMade++;
+        }
+        else
+            groupSlot++;
+        groups[group * 4 + 2]++;
+        overlaySites++;
     }
+    u32 groupsMade = lastOverlay ? group + 1 : 0;
     words[SHADOW_COUNT_FIELD / 4] = made;
     words[SHADOW_STUBS_OFFSET_FIELD / 4] = codeSize;
     *at(&shadow_groups) = runAddress + groupsOffset;
@@ -715,7 +860,8 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
         *(u32*)sRegion2Literal[i] = 0;
     for (u32 i = 0; i < sRegion2McrCount; i++)
         *(u32*)sRegion2Mcr[i] = 0xE1A00000; // mov r0, r0
-    LOG_DEBUG("Shadow at 0x%x: %u stubs of %u (%u out of reach), %u overlays with %u patches, %u static sites from overlay calls\n",
-        runAddress, made, sEntryCount, failed, groupsMade, patchesMade, sStaticFromOverlays);
+    LOG_DEBUG("Shadow at 0x%x: %u stubs of %u (%u out of reach)\n", runAddress, made, sEntryCount, failed);
+    LOG_DEBUG("Shadow: %u overlays, %u sites in %u slots, %u static from overlays\n",
+        groupsMade, overlaySites, l.slots, sStaticFromOverlays);
     return made != 0;
 }
