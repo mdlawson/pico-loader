@@ -903,6 +903,9 @@ void NdsLoader::ApplyArm7Patches()
     TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchStart = arm7PatchSpace;
     TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchSize = arm7PatchSpace ? ARM7_PATCH_SPACE_SIZE : 0;
     TWL_SHARED_MEMORY->exitRequest.rts.censusStart = receiveFromArm9(); // 0 without one
+    // the 4 MB copies were made before these were known
+    if (!_runInDSiMode)
+        MirrorExitRequestBlock();
     u32 wramExtraSize = receiveFromArm9(); // the arm7 shadow, after the patch space
     if (cheatsPtr != nullptr && _cheats != nullptr)
     {
@@ -992,8 +995,7 @@ void NdsLoader::SetupSharedMemory(u32 cardId, u32 agbMem, u32 resetParam, u32 ro
         // The exit request block sits between the two ranges above, so mirror
         // it too. A DS-mode game on a DSi runs with 4MB RAM and only sees the
         // low copy; on a real DS every address aliases the same bytes.
-        memcpy((void*)0x027FF680, &TWL_SHARED_MEMORY->exitRequest, sizeof(exit_request_block_t));
-        memcpy((void*)0x023FF680, &TWL_SHARED_MEMORY->exitRequest, sizeof(exit_request_block_t));
+        MirrorExitRequestBlock();
     }
     else
     {
@@ -1003,6 +1005,15 @@ void NdsLoader::SetupSharedMemory(u32 cardId, u32 agbMem, u32 resetParam, u32 ro
 
     memcpy(TWL_SHARED_MEMORY->twlCardRomHeader, &_romHeader, sizeof(nds_header_twl_t));
     memcpy(TWL_SHARED_MEMORY->twlRomHeader, &_romHeader, sizeof(nds_header_twl_t));
+}
+
+// The exit request block sits between the ntr shared memory ranges. A DS-mode
+// game on a DSi runs with 4 MB of RAM and sees only the low copy; on a real DS
+// every address aliases the same bytes. Again whenever the block changes.
+void NdsLoader::MirrorExitRequestBlock()
+{
+    memcpy((void*)0x027FF680, &TWL_SHARED_MEMORY->exitRequest, sizeof(exit_request_block_t));
+    memcpy((void*)0x023FF680, &TWL_SHARED_MEMORY->exitRequest, sizeof(exit_request_block_t));
 }
 
 void NdsLoader::LoadFirmwareUserSettings()
