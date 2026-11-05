@@ -34,6 +34,15 @@ if version >= 2:
               % (c[2], c[1], c[4], c[12], c[22], c[23], c[57]))
     else:
         print("arm7 context missing (magic %08x)" % c[0])
+if version >= 5 and struct.unpack_from("<I", data, hsize - 4)[0] == 1:
+    # the zero map: 2 KB blocks left unwritten because they were all zero
+    zmap = data[0x1A00:0x1C00]
+    blocks = [b for b in range(len(zmap) * 8) if zmap[b >> 3] >> (b & 7) & 1]
+    buf = bytearray(data)
+    for b in blocks:
+        buf[b * 0x800:(b + 1) * 0x800] = bytes(0x800)
+    data = bytes(buf)
+    print("zero map: %d blocks of 2 KB were all zero and not written" % len(blocks))
 print()
 for name, start, size in SECTIONS:
     part = data[start:start + size]
