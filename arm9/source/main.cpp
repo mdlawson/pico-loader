@@ -177,9 +177,10 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
     void* censusSpace = nullptr;
     u32 censusRun = 0;
     u32 censusSize = 0;
+    u32 wramExtraSize = 0;
     void* patchSpace = Arm7Patcher().ApplyPatches(
         sLoaderPlatform, cheatsLength, cheats, bannerSavePath, sExitComboPatch != nullptr, exitComboArm7Installed,
-        sRunInDSiMode, sKeepDsiBios, censusSpace, censusRun, censusSize);
+        sRunInDSiMode, sKeepDsiBios, censusSpace, censusRun, censusSize, wramExtraSize);
     if (sSoftResetCheatsPointer != nullptr)
     {
         *sSoftResetCheatsPointer = cheats;
@@ -219,6 +220,7 @@ static void handleApplyArm7PatchesCommand(u32 cheatsLength)
     ipc_sendWordDirect(sKeepDsiBios ? 1 : 0);
     ipc_sendWordDirect((u32)patchSpace);
     ipc_sendWordDirect(census);
+    ipc_sendWordDirect(inWram ? wramExtraSize : 0); // copied into place after the patch space
 }
 
 static void handleSetAPInfoCommand()

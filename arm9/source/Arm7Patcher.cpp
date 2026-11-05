@@ -40,8 +40,9 @@ static u32 correctAddress(u32 address, bool runInDSiMode)
 
 void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
     char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed, bool runInDSiMode,
-    bool keepDsiBios, void*& censusSpace, u32& censusRunAddress, u32& censusSize) const
+    bool keepDsiBios, void*& censusSpace, u32& censusRunAddress, u32& censusSize, u32& wramExtraSize) const
 {
+    wramExtraSize = 0;
     cheatsPtr = nullptr;
     exitComboArm7Installed = false;
     auto romHeader = (const nds_header_ntr_t*)TWL_SHARED_MEMORY->ntrSharedMem.romHeader;
@@ -206,14 +207,29 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
 #ifdef RTS_CENSUS
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
 #else
-        u32 shadow7Size = 0, shadow7Run = 0;
+        u32 shadow7Size = 0, shadow7Run = 0, shadow7Pool = 0;
         void* shadow7Space = nullptr;
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
         {
             ShadowInstall7::Collect(romHeader);
             shadow7Size = (ShadowInstall7::SpaceNeeded() + 31) & ~31u;
+            // in arm7 wram right after the patch space when its arena has the
+            // room: a load restores it there too, and the main memory pool is
+            // all the arm9's shadow's (a tight one drops stores it needs)
+            u32 wramStart = ((u32)patchSpaceStart + ARM7_PATCH_SPACE_SIZE + 31) & ~31u;
+            if (shadow7Size && (u32)patchSpaceStart >= 0x03000000 && wramStart + shadow7Size + 0x2100 <= 0x0380F780)
+            {
+                shadow7Space = (void*)wramStart;
+                shadow7Run = wramStart;
+                arm7ArenaPatch->SetArm7PrivateWramArenaLo((void*)(wramStart + shadow7Size));
+                exitComboArm7Patch->SetShadow7(shadow7Run);
+                wramExtraSize = wramStart + shadow7Size - ((u32)patchSpaceStart + ARM7_PATCH_SPACE_SIZE);
+                LOG_DEBUG("Shadow7 space in arm7 wram at 0x%x\n", shadow7Run);
+            }
+            else
+                shadow7Pool = shadow7Size;
         }
-        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && ShadowInstall::SpaceNeeded() + shadow7Size != 0)
+        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && ShadowInstall::SpaceNeeded() + shadow7Pool != 0)
         {
             // the trap-free shadow, from the same place; the arm9 reaches it once
             // its install switches off the sdk's region 2
@@ -221,7 +237,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             u32 offset = start & 0x3FFFFF;
             // the arm7's shadow at the end, small and taken first; the arm9's
             // from the start, where the menu looks for it
-            u32 want = ((ShadowInstall::SpaceNeeded() + 31) & ~31u) + shadow7Size;
+            u32 want = ((ShadowInstall::SpaceNeeded() + 31) & ~31u) + shadow7Pool;
             // up to the census's small size always (pokemon's arena took that), more
             // only with the census's spare left to the arm7
             u32 room = offset + CENSUS_ARM7_SPARE <= 0x3FF000 ? (0x3FF000 - CENSUS_ARM7_SPARE - offset) & ~31u : 0;
@@ -234,9 +250,9 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
                 censusRunAddress = 0x02000000 + offset;
                 mainMemoryArenaLo = start + censusSize;
                 LOG_DEBUG("Shadow space at 0x%x, 0x%x bytes\n", censusRunAddress, censusSize);
-                if (shadow7Size && shadow7Size <= censusSize)
+                if (shadow7Pool && shadow7Pool <= censusSize)
                 {
-                    censusSize -= shadow7Size;
+                    censusSize -= shadow7Pool;
                     shadow7Space = (u8*)censusSpace + censusSize;
                     shadow7Run = censusRunAddress + censusSize;
                     exitComboArm7Patch->SetShadow7(shadow7Run);

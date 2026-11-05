@@ -39,6 +39,11 @@ patch_exitcombo_arm7_entry:
 common:
     cmp r0, #0 // irq index 0 = vblank
     bne dispatch
+    push {lr}
+    mov r0, #12
+    bl shadow7Call // the shadow's clock
+    pop {lr}
+    mov r0, #0
 
     // the state words below: hold counter, request age and the save state the
     // wrappers at the end keep; the save cooldown loses a frame every vblank
@@ -795,9 +800,10 @@ holdEnd:
     mov r0, #0 // the vblank index
     b dispatch
 
-// Into the arm7 shadow's code (ShadowPatchCode7.s), version 2 on: r0 = 0 stops
+// Into the arm7 shadow's code (ShadowPatchCode7.s), version 3: r0 = 0 stops
 // the timers whose reload it knows, 4 starts them again from their counts (r1
-// = IF as frozen), 8 starts a loaded state's channels again (r1 = restartMask).
+// = IF as frozen), 8 starts a loaded state's channels again (r1 = restartMask),
+// 12 counts a vblank.
 // Uses r0-r3, r12.
 shadow7Call:
     ldr r2, patch_exitcombo_arm7_shadow7_address
@@ -808,9 +814,9 @@ shadow7Call:
     cmp r3, r12
     bxne lr
     ldr r3, [r2, #4] // version
-    cmp r3, #2
-    bxlo lr
-    add r3, r2, #0x250
+    cmp r3, #3
+    bxne lr // this build's layout only
+    add r3, r2, #0x170
     add r3, r3, r0
     bx r3
 

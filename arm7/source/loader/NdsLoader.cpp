@@ -767,6 +767,7 @@ void NdsLoader::ApplyArm7Patches()
     TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchStart = arm7PatchSpace;
     TWL_SHARED_MEMORY->exitRequest.rts.arm7PatchSize = arm7PatchSpace ? ARM7_PATCH_SPACE_SIZE : 0;
     TWL_SHARED_MEMORY->exitRequest.rts.censusStart = receiveFromArm9(); // 0 without one
+    u32 wramExtraSize = receiveFromArm9(); // the arm7 shadow, after the patch space
     if (cheatsPtr != nullptr && _cheats != nullptr)
     {
         memcpy(cheatsPtr, _cheats, _cheats->length);
@@ -790,7 +791,7 @@ void NdsLoader::ApplyArm7Patches()
             REG_MBK8 = 0;
         }
 
-        const u32 patchSpaceSize = ARM7_PATCH_SPACE_SIZE;
+        const u32 patchSpaceSize = ARM7_PATCH_SPACE_SIZE + (wramExtraSize < 0x4000 ? wramExtraSize : 0);
         auto patchCode = std::make_unique_for_overwrite<u8[]>(patchSpaceSize);
         void* srcAddress = (void*)(((u32)patchSpaceStart & 0x7FFF) + 0x037F8000);
         if ((u32)srcAddress + patchSpaceSize > 0x03800000)
@@ -962,28 +963,22 @@ static u32 getContiguousFileSector(FIL* file)
 // saying which of the two it is and why.
 const char* NdsLoader::SetupRealTimeSaveFiles(rts_info_t& rts, char* status, u32 statusSize)
 {
-    auto file = std::make_unique<FIL>();
-    if (f_open(file.get(), RTS_MENU_PATH, FA_OPEN_EXISTING | FA_READ) != FR_OK)
+    auto menuFile = std::make_unique<FIL>();
+    if (f_open(menuFile.get(), RTS_MENU_PATH, FA_OPEN_EXISTING | FA_READ) != FR_OK)
     {
         return "no " RTS_MENU_PATH;
     }
-    u32 menuSize = f_size(file.get());
+    u32 menuSize = f_size(menuFile.get());
     if (menuSize == 0 || menuSize > RTS_MENU_MAX_SIZE)
     {
-        f_close(file.get());
-        return RTS_MENU_PATH " is empty or bigger than 32 KB";
-    }
-    auto menu = std::make_unique<u8[]>(menuSize);
-    UINT bytesRead = 0;
-    bool menuRead = f_read(file.get(), menu.get(), menuSize, &bytesRead) == FR_OK && bytesRead == menuSize;
-    f_close(file.get());
-    if (!menuRead)
-    {
-        return "could not read " RTS_MENU_PATH;
+        f_close(menuFile.get());
+        return RTS_MENU_PATH " is empty or bigger than 40 KB";
     }
 
+    auto file = std::make_unique<FIL>();
     if (f_open(file.get(), RTS_STASH_PATH, FA_OPEN_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
     {
+        f_close(menuFile.get());
         return "could not open or create " RTS_STASH_PATH;
     }
     // Reuse the file when it is the right size and in one piece; otherwise make
@@ -1004,15 +999,23 @@ const char* NdsLoader::SetupRealTimeSaveFiles(rts_info_t& rts, char* status, u32
             f_sync(file.get()) != FR_OK)
         {
             f_close(file.get());
-            return "could not make " RTS_STASH_PATH " as one piece (no free run of 224 KB?)";
+            f_close(menuFile.get());
+            return "could not make " RTS_STASH_PATH " as one piece (no free run of 232 KB?)";
         }
         stashSector = getContiguousFileSector(file.get());
     }
-    UINT bytesWritten = 0;
-    bool menuWritten = stashSector != 0 &&
-        f_lseek(file.get(), RTS_STASH_SIZE) == FR_OK &&
-        f_write(file.get(), menu.get(), menuSize, &bytesWritten) == FR_OK &&
-        bytesWritten == menuSize;
+    // the menu after the stash, a few KB at a time
+    bool menuWritten = stashSector != 0 && f_lseek(file.get(), RTS_STASH_SIZE) == FR_OK;
+    {
+        auto buffer = std::make_unique<u8[]>(0x1000);
+        for (u32 done = 0; menuWritten && done < menuSize; done += 0x1000)
+        {
+            UINT step = menuSize - done < 0x1000 ? menuSize - done : 0x1000, bytesRead = 0, bytesWritten = 0;
+            menuWritten = f_read(menuFile.get(), buffer.get(), step, &bytesRead) == FR_OK && bytesRead == step &&
+                f_write(file.get(), buffer.get(), step, &bytesWritten) == FR_OK && bytesWritten == step;
+        }
+    }
+    f_close(menuFile.get());
     if (f_close(file.get()) != FR_OK || stashSector == 0)
     {
         return RTS_STASH_PATH " is not in one piece";

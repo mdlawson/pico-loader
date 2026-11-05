@@ -17,8 +17,11 @@ public:
     ///        exit was installed, or \c false otherwise.
     /// @param runInDSiMode \c true if the rom should be loaded in DSi mode, or \c false otherwise.
     /// @param keepDsiBios \c true if the rom keeps the dsi bios on a DSi or 3DS, or \c false otherwise.
+    /// @param wramExtraSize Set to the bytes after the patch space in arm7 wram that
+    ///        the arm7 copies into place with it (the arm7 shadow), else 0.
     /// @return A pointer to the patch space in IWRAM, or \c nullptr if the patches have been placed in main memory.
     void* ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
         char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed,
-        bool runInDSiMode, bool keepDsiBios, void*& censusSpace, u32& censusRunAddress, u32& censusSize) const;
+        bool runInDSiMode, bool keepDsiBios, void*& censusSpace, u32& censusRunAddress, u32& censusSize,
+        u32& wramExtraSize) const;
 };

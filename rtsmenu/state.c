@@ -890,6 +890,97 @@ void mainRamKeep(void* block, u32 keep[KEEP_RANGES][2])
     }
 }
 
+// The arm7 shadow (arm9/source/shadow/ShadowPatchCode7.s), version 3: at the
+// end of the shadow space, which starts at censusStart.
+#define S7_DATA         0x010
+#define S7_FLAGS        0x130 // a bit per data byte
+#define S7_FROZE_AT     0x19C
+#define S7_HOLD         0x1A0
+#define S7_DELAYED      0x1A4
+#define S7_STARTED      0x1A8
+#define S7_MAX_GAP      (263 * 60) // lines of silence a delayed start may leave: a second
+
+// In the arm7 wram image (wram at 0x03800000; the loader puts it after the
+// patch space there when it fits), else at the end of the main memory shadow
+// space, which starts at censusStart.
+static volatile u8* findShadow7(volatile u8* at, u32 size) // at: 32-byte aligned as the arm7 sees it
+{
+    for (u32 a = 0; a + 32 <= size; a += 32)
+        if (*(vu32*)(at + a) == 0x37444853 /* 'SHD7' */ && *(vu32*)(at + a + 4) == 3)
+            return at + a;
+    return 0;
+}
+
+// A loaded state's pcm channels, from where they were: the hardware starts a
+// channel at the top of its sample, so one that was before its loop (or in a
+// one-shot) starts from the freeze's place in it, and one in its loop starts
+// later, a loop or more after it began, when its top comes round to the time
+// it had played (the arm7 shadow starts it then). The rest start from the top.
+static void soundPlace(volatile u8* s7, const u32* cnt) // cnt: SOUNDxCNT as the freeze found them
+{
+    volatile u32* started = (volatile u32*)(s7 + S7_STARTED);
+    u32 frozeAt = *(vu32*)(s7 + S7_FROZE_AT);
+    u32 hold = 0, delayed = *(vu32*)(s7 + S7_DELAYED);
+    for (u32 ch = 0; ch < 16; ch++)
+    {
+        u32 c = cnt[ch];
+        if (!(c & 0x80000000))
+            continue; // not playing: a start still to come stays
+        delayed &= ~(1u << ch);
+        u32 format = (c >> 29) & 3, repeat = (c >> 27) & 3;
+        u16 flags = *(vu16*)(s7 + S7_FLAGS + ch * 2);
+        u32 elapsed = frozeAt - started[ch];
+        if (format >= 2 || (repeat != 1 && repeat != 2) || (flags & 0x1510) != 0x1510 // SAD, TMR, PNT, LEN
+            || started[ch] == 0 || (s32)elapsed < 0)
+            continue;
+        volatile u8* d = s7 + S7_DATA + ch * 16;
+        u32 rate = 0x10000 - *(vu16*)(d + 8); // a sample is 2 * rate cycles, a line 2130
+        u32 unit = format == 1 ? 2 : 1;
+        u64 bytes = (u64)elapsed * 1065 / rate * unit;
+        u32 loopStart = *(vu16*)(d + 10) * 4, loopLength = (*(vu32*)(d + 12) & 0x3FFFFF) * 4;
+        u32 end = loopStart + loopLength;
+        if (bytes < loopStart || (repeat == 2 && bytes < end))
+        {
+            u32 off = (u32)bytes & ~3u;
+            *(vu32*)(d + 4) += off;
+            if (repeat == 1)
+                *(vu16*)(d + 10) = (loopStart - off) / 4; // the loop where it was
+            else
+            {
+                *(vu32*)(d + 12) = (end - off) / 4;
+                *(vu16*)(d + 10) = 0;
+            }
+            started[ch] = frozeAt;
+            continue;
+        }
+        if (repeat == 2)
+        {
+            hold |= 1u << ch; // a one-shot that ended
+            continue;
+        }
+        if (loopLength == 0)
+            continue;
+        u32 pos = loopStart + (u32)((bytes - loopStart) % loopLength);
+        // its top at frozeAt - pos + k * loopLength (in samples), the first
+        // more than a frame on: the resume can wait up to one for the timers
+        u64 gap = 0;
+        for (u32 k = 1; k < 256 && gap < 265; k++)
+            if (k * loopLength >= pos)
+                gap = (u64)((k * loopLength - pos) / unit) * rate / 1065;
+        if (gap < 265 || gap > S7_MAX_GAP)
+            continue;
+        started[ch] = frozeAt + (u32)gap;
+        hold |= 1u << ch;
+        delayed |= 1u << ch;
+    }
+    *(vu32*)(s7 + S7_HOLD) = hold;
+    *(vu32*)(s7 + S7_DELAYED) = delayed;
+    dcFlushAll();
+}
+
+static volatile u8* sShadow7Main; // where to place them after main ram is back
+static u32 sCnt7[16];
+
 static const char* load(void* block, void (*progress)(u32 done, u32 total), int* broken)
 {
     *broken = 0;
@@ -916,6 +1007,20 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     u32 arm7Buffer = (u32)__vram_copy;
     STEP(readState(STATE_ARM7_IO, arm7Buffer, 512));
     STEP(readState(STATE_ARM7_WRAM, arm7Buffer + ARM7_CTX_SIZE, 0x10000));
+    {
+        const u32* cnt = (const u32*)(arm7Buffer + ARM7_CTX_SOUNDCNT_X);
+        volatile u8* s7 = findShadow7((volatile u8*)(arm7Buffer + ARM7_CTX_SIZE), 0x10000);
+        sShadow7Main = 0;
+        if (s7)
+            soundPlace(s7, cnt);
+        else
+        {
+            u32 start = sRts->censusStart;
+            if (start >= 0x02000000 && start < 0x023F8000 && !(start & 31))
+                sShadow7Main = (volatile u8*)start; // looked for once main ram is the state's
+            memcpy(sCnt7, cnt, sizeof(sCnt7));
+        }
+    }
     STEP(command(RTS_MENU_STATE_ARM7_LOAD, 0, arm7Buffer, 0x10000 / 512) == RTS_MENU_STATE_DONE);
 
     // shared wram, whoever owns which half
@@ -1028,6 +1133,12 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     memcpy(&banked[10], h->sys, 2 * 4);
     memcpy(&banked[12], h->fiq, 8 * 4);
     writeBankedRegs(banked);
+    if (sShadow7Main)
+    {
+        volatile u8* s7 = findShadow7(sShadow7Main, 0x8000);
+        if (s7)
+            soundPlace(s7, sCnt7);
+    }
 
     while (done < total)
         progress(++done, total);

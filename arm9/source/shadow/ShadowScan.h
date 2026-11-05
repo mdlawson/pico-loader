@@ -36,7 +36,8 @@ static inline bool IsShadowed(u32 a)
     if (gTargetArm7)
     {
         u32 o = a - 0x04000000;
-        if (o >= 0x400 && o < 0x500) return (o & 0xF) >= 4; // SAD, TMR, PNT, LEN; CNT reads back
+        // SAD, TMR, PNT, LEN; CNT reads back, but its top byte stamps a start
+        if (o >= 0x400 && o < 0x500) return (o & 0xF) >= 3;
         if (o >= 0x100 && o < 0x110) return (o & 3) < 2;     // the reloads
         return o >= 0x510 && o < 0x520;                      // capture DAD, LEN
     }
