@@ -4,6 +4,11 @@ namespace shadow_scan
 {
 u32 gTargetArm7 = 0;
 
+// Blocks keep their run address's alignment (the code sits at it on the ds), so
+// whole halfwords and words read in one go: the loader scans with few cycles
+typedef u32 __attribute__((may_alias)) u32a;
+typedef uint16_t __attribute__((may_alias)) u16a;
+
 static inline u32 ror(u32 v, u32 r) { r &= 31; return r ? (v >> r) | (v << (32 - r)) : v; }
 
 const Block* Scanner::BlockOf(u32 a) const
@@ -21,8 +26,7 @@ bool Scanner::Read32(u32 a, u32& v) const
     const Block* b = BlockOf(a);
     if (!b || a - b->runAddress + 4 > b->size)
         return false;
-    const uint8_t* p = b->data + (a - b->runAddress);
-    v = p[0] | (p[1] << 8) | (p[2] << 16) | ((u32)p[3] << 24);
+    v = *(const u32a*)(b->data + (a - b->runAddress));
     return true;
 }
 
@@ -33,8 +37,7 @@ bool Scanner::Read16(u32 a, u32& v) const
     const Block* b = BlockOf(a);
     if (!b || a - b->runAddress + 2 > b->size)
         return false;
-    const uint8_t* p = b->data + (a - b->runAddress);
-    v = p[0] | (p[1] << 8);
+    v = *(const u16a*)(b->data + (a - b->runAddress));
     return true;
 }
 
@@ -701,7 +704,7 @@ void Scanner::TraceThumb(u32 pc, Regs r, int depth)
 
 static inline bool al4(u32 w) { return (w >> 28) == 0xE; }
 
-void Scanner::Scan(u32 first, u32 count)
+__attribute__((section(".itcm"))) void Scanner::Scan(u32 first, u32 count)
 {
     for (u32 bi = first; bi < first + count && bi < _blockCount; bi++)
     {
@@ -709,7 +712,7 @@ void Scanner::Scan(u32 first, u32 count)
         for (u32 off = 0; off + 4 <= b.size; off += 4)
         {
             const uint8_t* p = b.data + off;
-            u32 w = p[0] | (p[1] << 8) | (p[2] << 16) | ((u32)p[3] << 24);
+            u32 w = *(const u32a*)p;
             if ((w >> 28) == 0xF)
                 continue;
             u32 rd = (w >> 12) & 0xF;
@@ -764,10 +767,16 @@ void Scanner::Scan(u32 first, u32 count)
             // conditional loads still give the register on the taken path
             Trace(b.runAddress + off + 4, r, 0);
         }
-        for (u32 off = 0; off + 4 <= b.size; off += 2)
+        const uint8_t* data = b.data;
+        const u32 size = b.size;
+        for (u32 off = 0; off + 4 <= size; off += 2)
         {
-            const uint8_t* p = b.data + off;
-            u32 h = p[0] | (p[1] << 8), h2 = p[2] | (p[3] << 8);
+            const uint8_t* p = data + off;
+            u32 h = *(const u16a*)p;
+            // ldr rx, [pc, #imm] (0x48xx) or movs rx, #imm (0x20xx) only
+            if ((h >> 11) != 9 && (h >> 11) != 4)
+                continue;
+            u32 h2 = *(const u16a*)(p + 2);
             u32 v = 0, x = (h >> 8) & 7, next = 2;
             bool start = false;
             if ((h & 0xF800) == 0x4800)

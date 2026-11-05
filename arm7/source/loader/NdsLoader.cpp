@@ -646,6 +646,28 @@ void NdsLoader::HandleHomebrewPatching()
 // The rts's register shadow scans the overlays for the stores it keeps (the arm9
 // patcher, shadow/ShadowInstall.cpp): each one read where it runs, into memory
 // that is still clear, for the arm9 to look at and clear again.
+// The overlays' spans, 32-byte lines (the arm9 scans with its dcache on) and
+// which are done. Words: the loader runs from vram.
+#define SHADOW_OVERLAYS_MAX 512
+static u32 sOverlaySpan[SHADOW_OVERLAYS_MAX][2];
+static u32 sOverlayDone[SHADOW_OVERLAYS_MAX / 32];
+
+// 8 words a time, for the ldm bursts.
+static bool isClear(u32 ram, u32 ramSize)
+{
+    asm volatile("" ::: "memory"); // the arm9 cleared it before it answered
+    typedef u32 __attribute__((may_alias)) u32a;
+    const u32a* p = (const u32a*)ram;
+    const u32a* end = (const u32a*)(ram + ((ramSize + 3) & ~3u));
+    for (; p + 8 <= end; p += 8)
+        if (p[0] | p[1] | p[2] | p[3] | p[4] | p[5] | p[6] | p[7])
+            return false;
+    for (; p < end; p++)
+        if (*p)
+            return false;
+    return true;
+}
+
 void NdsLoader::ShadowScanOverlays()
 {
     sendToArm9(IPC_COMMAND_ARM9_SHADOW_OVERLAYS);
@@ -653,19 +675,57 @@ void NdsLoader::ShadowScanOverlays()
         return;
     u32 romOffset = TWL_SHARED_MEMORY->ntrSharedMem.romOffset;
     u32 count = _romHeader.arm9OverlayTableSize / 32;
-    u32 scanned = 0;
-    for (u32 i = 0; i < count && i < 1024; i++)
+    if (count > SHADOW_OVERLAYS_MAX)
+        count = SHADOW_OVERLAYS_MAX;
+    UINT bytesRead = 0;
+    memset(sOverlayDone, 0, sizeof(sOverlayDone));
+    // the table once: where each one goes
+    for (u32 i = 0; i < count; i++)
     {
         u32 entry[8];
-        u32 fat[2];
-        UINT bytesRead = 0;
         if (f_lseek(&_romFile, romOffset + _romHeader.arm9OverlayTableOffset + i * 32) != FR_OK
             || f_read(&_romFile, entry, 32, &bytesRead) != FR_OK || bytesRead != 32)
+        {
+            count = i;
             break;
+        }
         u32 ram = entry[1], ramSize = entry[2], fileId = entry[6];
         if (ram < 0x02000000 || ram >= 0x02400000 || ramSize == 0 || ramSize > 0x400000 - (ram - 0x02000000)
             || (ram & 3) || fileId * 8 + 8 > _romHeader.fatSize)
+        {
+            sOverlayDone[i >> 5] |= 1u << (i & 31);
             continue;
+        }
+        sOverlaySpan[i][0] = ram & ~31u;
+        sOverlaySpan[i][1] = (ram + ramSize + 31) & ~31u;
+    }
+
+    // The arm9 scans one while the arm7 reads the next into memory the first
+    // doesn't touch, so the card and the scan overlap.
+    u32 scanned = 0;
+    u32 busyFrom = 0, busyTo = 0; // what the arm9 has, empty when idle
+    while (true)
+    {
+        u32 i = 0;
+        for (; i < count; i++)
+            if (!(sOverlayDone[i >> 5] & (1u << (i & 31)))
+                && (sOverlaySpan[i][1] <= busyFrom || sOverlaySpan[i][0] >= busyTo))
+                break;
+        if (i == count)
+        {
+            if (busyFrom == busyTo)
+                break;
+            receiveFromArm9();
+            busyFrom = busyTo = 0;
+            continue;
+        }
+        sOverlayDone[i >> 5] |= 1u << (i & 31);
+        u32 entry[8];
+        u32 fat[2];
+        if (f_lseek(&_romFile, romOffset + _romHeader.arm9OverlayTableOffset + i * 32) != FR_OK
+            || f_read(&_romFile, entry, 32, &bytesRead) != FR_OK || bytesRead != 32)
+            continue;
+        u32 ram = entry[1], ramSize = entry[2], fileId = entry[6];
         if (f_lseek(&_romFile, romOffset + _romHeader.fatOffset + fileId * 8) != FR_OK
             || f_read(&_romFile, fat, 8, &bytesRead) != FR_OK || bytesRead != 8)
             continue;
@@ -673,10 +733,7 @@ void NdsLoader::ShadowScanOverlays()
         if (fat[1] < fat[0] || fileSize > ramSize)
             continue;
         // only into memory nothing else holds
-        bool clear = true;
-        for (u32 a = ram; a < ram + ramSize && clear; a += 4)
-            clear = *(vu32*)a == 0;
-        if (!clear)
+        if (!isClear(ram, ramSize))
             continue;
         if (f_lseek(&_romFile, romOffset + fat[0]) != FR_OK
             || f_read(&_romFile, (void*)ram, fileSize, &bytesRead) != FR_OK || bytesRead != fileSize)
@@ -684,11 +741,14 @@ void NdsLoader::ShadowScanOverlays()
             memset((void*)ram, 0, fileSize);
             continue;
         }
+        if (busyFrom != busyTo)
+            receiveFromArm9();
         sendToArm9(IPC_COMMAND_ARM9_SHADOW_OVERLAY);
         for (int k = 0; k < 8; k++)
             sendToArm9(entry[k]);
         sendToArm9(fileSize);
-        receiveFromArm9();
+        busyFrom = sOverlaySpan[i][0];
+        busyTo = sOverlaySpan[i][1];
         scanned++;
     }
     LOG_DEBUG("Shadow: %u of %u overlays scanned\n", scanned, count);

@@ -59,6 +59,27 @@ static u32 sOverlayEntries;
 static u32 sOverlaysWithSites;
 static u32 sVblankRoutine;
 
+// The loader runs with the data cache off. Reading a whole overlay through it
+// uncached (the game's decompressor, then the scan) is what took the time, so
+// these windows turn it on for main memory, and clean and invalidate it all
+// before turning it off again: nothing else reads that memory meanwhile.
+__attribute__((target("arm"), noinline)) static u32 dcacheOn()
+{
+    u32 c;
+    asm volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(c));
+    dc_invalidateAll();
+    asm volatile("mcr p15, 0, %0, c1, c0, 0" :: "r"(c | 4) : "memory");
+    return c;
+}
+
+__attribute__((target("arm"), noinline)) static void dcacheOff(u32 c)
+{
+    dc_flushAll();
+    dc_drainWriteBuffer();
+    asm volatile("mcr p15, 0, %0, c1, c0, 0" :: "r"(c) : "memory");
+    dc_invalidateAll();
+}
+
 // The recorder reads the store's registers from r0-r12 as it saved them, and lr
 // from the stub's copy; never sp or pc.
 static bool usesHighRegs(u32 op)
@@ -194,7 +215,10 @@ void ShadowInstall::Collect(u32 arm9Start, u32 arm9Size, const IAutoloadAdjuster
     if (autoload)
         while (sAutoloadFrom - 4 > arm9Start && autoload->AdjustInitialToFinal(sAutoloadFrom - 4) != sAutoloadFrom - 4)
             sAutoloadFrom -= 4;
+    dc_flushAll(); // the loader's patches, written uncached, are in memory already
+    u32 cache = dcacheOn();
     ScanBlocks(&block, 1, 0, autoload);
+    dcacheOff(cache);
     LOG_DEBUG("Shadow: %u stubs for the static arm9\n", sEntryCount - before);
 }
 
@@ -344,7 +368,7 @@ void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
 {
     u32 id = entry[0], ram = entry[1], ramSize = entry[2], compressed = entry[7];
     dc_flushAll();
-    dc_invalidateAll();
+    u32 cache = dcacheOn();
     if ((compressed >> 24) & 1)
     {
         u32 packed = compressed & 0xFFFFFF;
@@ -371,7 +395,7 @@ void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
     }
 clear:
     memset((void*)ram, 0, ramSize);
-    dc_flushAll();
+    dcacheOff(cache);
 }
 
 // After the stubs: the overlays' patches, a group (id, the patches, how many) per
