@@ -221,9 +221,12 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
 
             if (availableParentSize >= REQUIRED_PATCH_HEAP_SPACE)
             {
+                // All of the zero tail, not just the minimum: the exit combo and
+                // the rts menu hook come after the mandatory patches and need more
+                // (NSMB and Metroid Prime Hunters had no room with 0x500).
                 patchContext.GetPatchHeap().AddFreeSpace(
-                    (void*)(PARENT_SECTION_END - REQUIRED_PATCH_HEAP_SPACE),
-                    REQUIRED_PATCH_HEAP_SPACE);
+                    (void*)(PARENT_SECTION_END - availableParentSize),
+                    availableParentSize);
                 LOG_DEBUG("Placing patches in .parent section\n");
             }
             else
