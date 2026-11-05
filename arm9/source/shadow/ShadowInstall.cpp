@@ -21,6 +21,7 @@ extern "C" u32 shadow_group_count;
 #define SHADOW_STUBS_OFFSET_FIELD   0x0C
 #define SHADOW_COUNT_FIELD          0x08
 #define SHADOW_STUB_SIZE            16
+#define SHADOW_GROUP_SIZE           32
 #define SHADOW_MAX_SITES            768
 #define SHADOW_MAX_COPIES           64
 #define SHADOW_MAX_OVERLAYS         128
@@ -119,6 +120,19 @@ static bool thumbMovable(u32 h)
             return false; // hi register ops on sp, lr, pc; bx/blx
     }
     return true;
+}
+
+// ldr rx, [pc, #imm]: movable into a stub ahead of the store only, with its
+// literal in the stub's last word (as ldr rx, [pc, #8] from the stub's second halfword)
+static bool thumbLiteralLoad(u32 h)
+{
+    return (h >> 11) == 0x09;
+}
+
+static u32 thumbLiteralOf(u32 at)
+{
+    u32 h = half(at);
+    return *(const u32*)(((at + 4) & ~3u) + (h & 0xFF) * 4);
 }
 
 // Is lr dead at a thumb site, so that a bl may go there? The routine pushed it
@@ -302,7 +316,8 @@ static void ScanBlocks(const shadow_scan::Block* blocks, u32 blockCount, u32 ove
                 consumedEnd = site + 4;
             }
             else if (site - 2 >= consumedEnd && site - 2 - lo >= skip && inArm9(site - 2, 4) && thumbLrDead(site - 2)
-                && !thumbBranchedTo(site) && thumbMovable(half(site - 2)))
+                && !thumbBranchedTo(site) && (thumbMovable(half(site - 2))
+                    || (thumbLiteralLoad(half(site - 2)) && inArm9(((site + 2) & ~3u) + (half(site - 2) & 0xFF) * 4, 4))))
             {
                 // the instruction before it goes in the stub instead
                 e.type = ENTRY_THUMB_PREV;
@@ -508,9 +523,9 @@ bool ShadowInstall::CacheLoad(u32 words, u32 (*next)())
 }
 
 // The space: this code, a fixed stub per static site and per overlay copy call,
-// the overlays' shared stub slots, a group per overlay (id, its records, how
-// many, its first slot), then the records (ShadowPatchCode.s): two words a site,
-// three for a copy call.
+// the overlays' shared stub slots, a group per overlay (8 words), then each
+// group's records (ShadowPatchCode.s): a halfword a site, then a word and three
+// words a copy call.
 struct Layout
 {
     u32 fixed;        // fixed stubs
@@ -552,7 +567,7 @@ static const Layout& layoutFor(u32 count)
 {
     Layout& l = sLayout;
     l.fixed = l.slots = l.groups = l.recordBytes = 0;
-    static u32 groupOverlay[SHADOW_MAX_OVERLAYS + 1], groupSlots[SHADOW_MAX_OVERLAYS + 1];
+    static u32 groupOverlay[SHADOW_MAX_OVERLAYS + 1], groupSlots[SHADOW_MAX_OVERLAYS + 1], groupCopies[SHADOW_MAX_OVERLAYS + 1];
     u32 last = 0;
     for (u32 i = 0; i < count; i++)
     {
@@ -566,14 +581,17 @@ static const Layout& layoutFor(u32 count)
         if (e.overlay != last && l.groups <= SHADOW_MAX_OVERLAYS)
         {
             groupOverlay[l.groups] = e.overlay;
-            groupSlots[l.groups] = 0;
+            groupSlots[l.groups] = groupCopies[l.groups] = 0;
             l.groups++;
         }
         last = e.overlay;
-        l.recordBytes += e.type == ENTRY_COPY ? 12 : 8;
         if (e.type != ENTRY_COPY)
             groupSlots[l.groups - 1]++;
+        else
+            groupCopies[l.groups - 1]++;
     }
+    for (u32 g = 0; g < l.groups; g++)
+        l.recordBytes += ((groupSlots[g] * 2 + 3) & ~3u) + 4 + groupCopies[g] * 12;
     for (u32 g = 0; g < l.groups; g++)
     {
         u32 ram = 0, size = 0;
@@ -602,7 +620,7 @@ static const Layout& layoutFor(u32 count)
             l.slots = best + n;
     }
     u32 code = (SECTION_SIZE(patch_shadow) + 31) & ~31u;
-    l.size = code + (l.fixed + l.slots) * SHADOW_STUB_SIZE + l.groups * 16 + l.recordBytes;
+    l.size = code + (l.fixed + l.slots) * SHADOW_STUB_SIZE + l.groups * SHADOW_GROUP_SIZE + l.recordBytes;
     return l;
 }
 
@@ -647,19 +665,41 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
     u32 codeSize = (SECTION_SIZE(patch_shadow) + 31) & ~31u;
     if (size < codeSize + SHADOW_STUB_SIZE)
         return false;
-    // Short of space: overlays that don't fit are left out whole, from the last
-    // one back, as long as that helps (a later one may only share slots); then
-    // the static sites from the end.
+    // Short of space: overlays are left out whole, the one with the most sites
+    // first (its records, and often the most slots); then the ones that fit
+    // after all go back, the fewest sites first; then the static sites from the end.
     sLeftOutCount = 0;
     u32 count = sEntryCount;
-    for (u32 i = count; i-- > 0 && layoutFor(count).size > size;)
+    // the overlays and their site counts (an overlay's entries are together)
+    static u32 runOverlay[SHADOW_MAX_OVERLAYS], runSites[SHADOW_MAX_OVERLAYS];
+    u32 runs = 0;
+    for (u32 i = 0; i < count; i++)
     {
         u32 overlay = sEntries[i].overlay;
-        if (!overlay || leftOut(overlay) || sLeftOutCount >= SHADOW_MAX_OVERLAYS)
+        if (!overlay)
             continue;
-        sLeftOut[sLeftOutCount++] = overlay;
+        if (runs && runOverlay[runs - 1] == overlay)
+            runSites[runs - 1]++;
+        else if (runs < SHADOW_MAX_OVERLAYS)
+        {
+            runOverlay[runs] = overlay;
+            runSites[runs++] = 1;
+        }
     }
-    // put back the ones that fit after all, first to last
+    while (layoutFor(count).size > size && sLeftOutCount < SHADOW_MAX_OVERLAYS)
+    {
+        u32 best = 0, bestSites = 0;
+        for (u32 r = 0; r < runs; r++)
+            if (runSites[r] > bestSites && !leftOut(runOverlay[r]))
+            {
+                best = runOverlay[r];
+                bestSites = runSites[r];
+            }
+        if (!best)
+            break;
+        sLeftOut[sLeftOutCount++] = best;
+    }
+    // sLeftOut is by sites, most first: back from the end
     for (u32 k = sLeftOutCount; k-- > 0;)
     {
         u32 overlay = sLeftOut[k];
@@ -667,8 +707,12 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
         if (layoutFor(count).size > size)
             sLeftOut[k] = overlay;
     }
+    for (u32 k = 0; k < sLeftOutCount; k++)
+        if (sLeftOut[k])
+            LOG_DEBUG("Shadow: overlay %u left out\n", sLeftOut[k] - 1);
     while (count && layoutFor(count).size > size)
         count--;
+    LOG_DEBUG("Shadow: 0x%x of 0x%x bytes\n", layoutFor(count).size, size);
     if (count == 0)
         return false;
     const Layout& l = layoutFor(count);
@@ -685,31 +729,21 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
 
     u32 slotsOffset = codeSize + l.fixed * SHADOW_STUB_SIZE;
     u32 groupsOffset = slotsOffset + l.slots * SHADOW_STUB_SIZE;
-    u32 recordsOffset = groupsOffset + l.groups * 16;
+    u32 recordsOffset = groupsOffset + l.groups * SHADOW_GROUP_SIZE;
     u32* groups = (u32*)((u8*)space + groupsOffset);
-    u32* records = (u32*)((u8*)space + recordsOffset);
-    u32 recordWords = 0, group = 0, groupSlot = 0, lastOverlay = 0;
+    u8* records = (u8*)space + recordsOffset;
+    static u32 copyValue[SHADOW_MAX_SITES]; // an overlay copy call's halfwords to put, 0 if none
 
     u32 made = 0, fixedMade = 0, failed = 0, overlaySites = 0;
     for (u32 i = 0; i < count; i++)
     {
         const Entry& e = sEntries[i];
-        if (e.overlay && leftOut(e.overlay))
+        copyValue[i] = 0;
+        // an overlay's sites are made below, as records
+        if (e.overlay && (leftOut(e.overlay) || e.type != ENTRY_COPY))
             continue;
-        if (e.overlay && e.overlay != lastOverlay)
-        {
-            // a new group: its records from here, its slots where the layout put them
-            group = lastOverlay ? group + 1 : 0;
-            groups[group * 4 + 0] = e.overlay - 1;
-            groups[group * 4 + 1] = runAddress + recordsOffset + recordWords * 4;
-            groups[group * 4 + 2] = 0;
-            groups[group * 4 + 3] = runAddress + slotsOffset + l.slotStart[group] * SHADOW_STUB_SIZE;
-            groupSlot = 0;
-            lastOverlay = e.overlay;
-        }
-        bool fixed = !e.overlay || e.type == ENTRY_COPY;
-        u32 stubOffset = fixed ? codeSize + fixedMade * SHADOW_STUB_SIZE
-            : slotsOffset + (l.slotStart[group] + groupSlot) * SHADOW_STUB_SIZE;
+        const bool fixed = true;
+        u32 stubOffset = codeSize + fixedMade * SHADOW_STUB_SIZE;
         u32 stubRun = runAddress + stubOffset;
         u32* stub = (u32*)((u8*)space + stubOffset);
         u32 value = 0;
@@ -768,10 +802,15 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
                 if (fixed)
                 {
                     u32 prev = e.orig & 0xFFFF, store = e.orig >> 16;
+                    stub[3] = 0;
+                    if (thumbLiteralLoad(prev))
+                    {
+                        stub[3] = thumbLiteralOf(e.initial);
+                        prev = 0x4802 | (prev & 0x0700);
+                    }
                     stub[0] = 0xB500 | (prev << 16);
                     stub[1] = store | (rhi << 16);
                     stub[2] = rlo | (0xBD00 << 16);
-                    stub[3] = 0;
                 }
                 value = hi | (lo << 16);
                 ok = true;
@@ -831,20 +870,97 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
             fixedMade++;
             continue;
         }
-        // an overlay's: a record, for when it comes in
-        records[recordWords++] = e.final | (e.type << 28);
-        records[recordWords++] = e.orig;
-        if (e.type == ENTRY_COPY)
-        {
-            records[recordWords++] = value;
-            fixedMade++;
-        }
-        else
-            groupSlot++;
-        groups[group * 4 + 2]++;
+        // an overlay's copy call: its stub now, its record with its group's
+        copyValue[i] = value;
+        fixedMade++;
         overlaySites++;
     }
-    u32 groupsMade = lastOverlay ? group + 1 : 0;
+
+    // the overlays' groups, as layoutFor makes them, and their records
+    u32 group = 0, recordByte = 0;
+    for (u32 i = 0; i < count;)
+    {
+        u32 overlay = sEntries[i].overlay;
+        if (!overlay || leftOut(overlay))
+        {
+            i++;
+            continue;
+        }
+        u32 end = i;
+        while (end < count && (sEntries[end].overlay == overlay || !sEntries[end].overlay || leftOut(sEntries[end].overlay)))
+            end++;
+        u32 base = 0, spanSize = 0;
+        if (!spanOf(overlay, base, spanSize))
+        {
+            base = 0xFFFFFFFF;
+            for (u32 j = i; j < end; j++)
+                if (sEntries[j].overlay == overlay && sEntries[j].final < base)
+                    base = sEntries[j].final & ~3u;
+        }
+        u32* g = groups + group * (SHADOW_GROUP_SIZE / 4);
+        u32 slot0 = runAddress + slotsOffset + l.slotStart[group] * SHADOW_STUB_SIZE;
+        g[0] = overlay - 1;
+        g[1] = base;
+        g[2] = runAddress + recordsOffset + recordByte;
+        g[3] = slot0;
+        u16* rec = (u16*)((u8*)records + recordByte);
+        u32 hash = 2166136261u, n = 0;
+        u32 counts[4];
+        static const u32 order[4] = { ENTRY_ARM, ENTRY_THUMB, ENTRY_THUMB2, ENTRY_THUMB_PREV };
+        for (u32 t = 0; t < 4; t++)
+        {
+            counts[t] = 0;
+            for (u32 j = i; j < end; j++)
+            {
+                const Entry& e = sEntries[j];
+                if (e.overlay != overlay || e.type != order[t])
+                    continue;
+                u32 scale = t == 0 ? 4 : 2;
+                u32 off = e.final - base;
+                u32 stubRun = slot0 + n * SHADOW_STUB_SIZE;
+                u32 x;
+                u16 hi, lo;
+                bool ok = e.final >= base && off % scale == 0 && off / scale <= 0xFFFF;
+                if (ok && t == 0)
+                    ok = armBranch(e.final, stubRun, x) && armBranch(stubRun + 8, record, x);
+                else if (ok)
+                    ok = thumbCall(e.final, stubRun, false, hi, lo) && thumbCall(stubRun + 4, recordThumb, true, hi, lo)
+                        && thumbCall(stubRun + 10, recordThumb, true, hi, lo);
+                if (!ok)
+                {
+                    failed++;
+                    continue;
+                }
+                rec[n++] = off / scale;
+                hash = (hash ^ e.orig) * 16777619u;
+                counts[t]++;
+                made++;
+                overlaySites++;
+            }
+        }
+        g[4] = hash;
+        g[5] = counts[0] | (counts[1] << 16);
+        g[6] = counts[2] | (counts[3] << 16);
+        recordByte += (n * 2 + 3) & ~3u;
+        u32* copies = (u32*)((u8*)records + recordByte);
+        g[7] = runAddress + recordsOffset + recordByte;
+        copies[0] = 0;
+        for (u32 j = i; j < end; j++)
+        {
+            const Entry& e = sEntries[j];
+            if (e.overlay != overlay || e.type != ENTRY_COPY || !copyValue[j])
+                continue;
+            u32* c = copies + 1 + copies[0] * 3;
+            c[0] = e.final;
+            c[1] = e.orig;
+            c[2] = copyValue[j];
+            copies[0]++;
+        }
+        recordByte += 4 + copies[0] * 12;
+        group++;
+        i = end;
+    }
+    u32 groupsMade = group;
     words[SHADOW_COUNT_FIELD / 4] = made;
     words[SHADOW_STUBS_OFFSET_FIELD / 4] = codeSize;
     *at(&shadow_groups) = runAddress + groupsOffset;

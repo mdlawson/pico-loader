@@ -264,13 +264,15 @@ copied:
 
 // The overlays' sites. Overlays that go in the same memory can't be in at once,
 // so the loader gives them the same stub slots and an overlay's stubs are made
-// here as it comes in. shadow_groups: per overlay with sites
-//     id, its records, how many, its first slot
-// and a record per site:
-//     the site | type << 28, the halfwords found there (low first)
-// type 0 arm, 1 thumb, 2 thumb pair, 4 thumb with the one before; 3 a copy
-// call, whose stub is made at boot: one more word, the halfwords to put. Each
-// record but a copy's takes the next slot, used or not.
+// here as it comes in. shadow_groups: per overlay with sites, 8 words
+//     id, base, its records, its first slot, the hash of its sites as found,
+//     how many arm | thumb << 16, thumb pair | thumb with the one before << 16,
+//     its copy calls
+// The records are halfwords: a site's offset from the base, in words for the
+// arm ones and halfwords for the rest, by type in that order; each takes the
+// next slot. What a site holds is read from it once the hash says they all
+// still hold what the scan found. The copy calls, whose stubs are made at boot:
+//     how many, then per call: the site, the halfwords found, the halfwords to put
 
 // From the overlay hook (ShadowOverlayHook.s), as an overlay has loaded: r0 = its
 // table entry.
@@ -286,7 +288,7 @@ shadow_overlay_loaded:
     blt 9f
     ldr r2, [r4]
     cmp r2, r1
-    addne r4, r4, #16
+    addne r4, r4, #32
     bne 1b
     mov r0, r4
     bl apply_group
@@ -306,67 +308,135 @@ shadow_vblank:
 1:
     subs r5, r5, #1
     blt 9f
-    ldmib r4, {r6, r7} // records, how many
-    cmp r7, #0
-    beq 8f
+    mov r0, r4
+    bl group_hash
+    ldr r1, [r4, #16]
+    cmp r0, r1
+    bne 8f
+    ldr r6, [r4, #28]
+    ldr r7, [r6], #4
 2:
-    ldmia r6!, {r0, r1}
-    mov r2, r0, lsr #28
-    cmp r2, #3
-    addeq r6, r6, #4
-    bic r0, r0, #0xF0000000
+    subs r7, r7, #1
+    blt 3f
+    ldmia r6!, {r0, r1, r2}
     ldrh r2, [r0]
     ldrh r3, [r0, #2]
     orr r2, r2, r3, lsl #16
     cmp r2, r1
     bne 8f
-    subs r7, r7, #1
-    bne 2b
+    b 2b
+3:
     mov r0, r4
     bl apply_group
 8:
-    add r4, r4, #16
+    add r4, r4, #32
     b 1b
 9:
     pop {r4-r8, pc}
 
-// r0 = a group: each site still as found gets its stub and its branch.
+// r0 = a group -> r0 = the hash of what its sites hold (fnv-1a by words)
+group_hash:
+    push {r4-r8, lr}
+    ldr r4, [r0, #4]
+    ldr r5, [r0, #8]
+    add r6, r0, #20
+    ldr r0, =2166136261
+    ldr r8, =16777619
+    mov r7, #0
+1:
+    ldrh r3, [r6], #2
+2:
+    subs r3, r3, #1
+    blt 3f
+    ldrh r1, [r5], #2
+    cmp r7, #0
+    addeq r1, r4, r1, lsl #2
+    addne r1, r4, r1, lsl #1
+    ldrh r2, [r1]
+    ldrh r1, [r1, #2]
+    orr r2, r2, r1, lsl #16
+    eor r0, r0, r2
+    mul r0, r8, r0
+    b 2b
+3:
+    add r7, r7, #1
+    cmp r7, #4
+    blt 1b
+    pop {r4-r8, pc}
+
+// r0 = a group: if its sites hold what was found, each gets its stub and its
+// branch; each copy call still as found gets its branch.
 apply_group:
     push {r4-r11, lr}
-    ldmib r0, {r4, r5, r6} // records, how many, the first slot
+    push {r0}
+    mov r11, r0
+    bl group_hash
+    ldr r1, [r11, #16]
+    cmp r0, r1
+    bne 6f
+    ldr r4, [r11, #4] // the base
+    ldr r5, [r11, #8] // the records
+    ldr r6, [r11, #12] // the first slot
+    add r11, r11, #20 // the counts
+    mov r9, #0 // the type
 1:
-    subs r5, r5, #1
+    ldrh r0, [r11], #2
+    str r0, [sp, #-4]!
+2:
+    ldr r0, [sp]
+    subs r0, r0, #1
+    blt 4f
+    str r0, [sp]
+    ldrh r7, [r5], #2
+    cmp r9, #0
+    addeq r7, r4, r7, lsl #2
+    addne r7, r4, r7, lsl #1
+    ldrh r8, [r7]
+    ldrh r0, [r7, #2]
+    orr r8, r8, r0, lsl #16
+    bl build_stub
+    mcr p15, 0, r6, c7, c10, 1 // the slot's line out to memory, for the code fetch
+    bl put_site
+    add r6, r6, #16
+    b 2b
+4:
+    add sp, sp, #4
+    cmp r9, #2
+    bgt 6f
+    moveq r9, #4
+    addlt r9, r9, #1
+    b 1b
+6:
+    ldr r0, [sp]
+    ldr r5, [r0, #28]
+    ldr r11, [r5], #4
+7:
+    subs r11, r11, #1
     blt 8f
-    ldmia r4!, {r7, r8} // the site | type << 28, the halfwords found
-    mov r9, r7, lsr #28
-    bic r7, r7, #0xF0000000
-    cmp r9, #3
-    ldreq r10, [r4], #4 // a copy's: the halfwords to put
+    ldmia r5!, {r7, r8, r10}
     ldrh r0, [r7]
     ldrh r1, [r7, #2]
     orr r0, r0, r1, lsl #16
     cmp r0, r8
-    bne 7f
-    cmp r9, #3
-    beq 5f
-    bl build_stub
-    mcr p15, 0, r6, c7, c10, 1 // the slot's line out to memory, for the code fetch
-5:
-    strh r10, [r7]
-    mov r10, r10, lsr #16
-    strh r10, [r7, #2]
-    mcr p15, 0, r7, c7, c10, 1
-    add r0, r7, #2
-    mcr p15, 0, r0, c7, c10, 1
-7:
-    cmp r9, #3
-    addne r6, r6, #16
-    b 1b
+    bne 7b
+    bl put_site
+    b 7b
 8:
+    add sp, sp, #4
     mov r0, #0
     mcr p15, 0, r0, c7, c10, 4 // drain the write buffer
     mcr p15, 0, r0, c7, c5, 0 // the instruction cache, as the code may have been there before
     pop {r4-r11, pc}
+
+// r7 = the site, r10 = its halfwords: put, and out to memory
+put_site:
+    strh r10, [r7]
+    mov r0, r10, lsr #16
+    strh r0, [r7, #2]
+    mcr p15, 0, r7, c7, c10, 1
+    add r0, r7, #2
+    mcr p15, 0, r0, c7, c10, 1
+    bx lr
 
 // r6 = the slot, r7 = the site, r8 = the halfwords found, r9 = the type -> the
 // stub in the slot (as ShadowInstall.cpp makes the static ones), r10 = the
@@ -428,8 +498,25 @@ build_stub:
     str r0, [r6, #12]
     b 6f
 4:
-    // push {lr} / the one before / the store / blx record / pop {pc}
+    // push {lr} / the one before / the store / blx record / pop {pc}; the one
+    // before a pc-relative ldr: from the stub's last word instead
+    mov r0, #0
+    str r0, [r6, #12]
     mov r0, r8, lsl #16
+    mov r2, r8, lsl #16
+    mov r2, r2, lsr #27
+    cmp r2, #0x09
+    bne 5f
+    and r2, r8, #0xFF
+    add r12, r7, #4
+    bic r12, r12, #3
+    ldr r12, [r12, r2, lsl #2]
+    str r12, [r6, #12]
+    and r0, r8, #0x0700
+    orr r0, r0, #0x4800
+    orr r0, r0, #2
+    mov r0, r0, lsl #16
+5:
     orr r0, r0, #0xB500
     str r0, [r6]
     add r0, r6, #6
@@ -441,8 +528,6 @@ build_stub:
     mov r0, r0, lsr #16
     orr r0, r0, #0xBD000000
     str r0, [r6, #8]
-    mov r0, #0
-    str r0, [r6, #12]
 6:
     // the site: bl to the slot
     mov r0, r7
