@@ -18,3 +18,6 @@
 #define IPC_COMMAND_ARM9_GET_BUILT_IN_DLDI_HEADER   0x13
 #define IPC_COMMAND_ARM9_SHADOW_OVERLAYS            0x14 // the rts register shadow: does it want the overlays?
 #define IPC_COMMAND_ARM9_SHADOW_OVERLAY             0x15 // one overlay, read into place: table entry, file size
+#define IPC_COMMAND_ARM9_SHADOW_CACHE_KEY           0x16 // the overlay scan cache: the arm9's part of its key
+#define IPC_COMMAND_ARM9_SHADOW_CACHE_LOAD          0x17 // word count, the words; answers 1 when taken
+#define IPC_COMMAND_ARM9_SHADOW_CACHE_SAVE          0x18 // answers the word count, then the words

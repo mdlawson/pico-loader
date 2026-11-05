@@ -56,6 +56,7 @@ static u32 sBlockStart, sBlockSize; // what the thumb checks may read: the stati
 static const u32* sUncompress;
 static u32* sOverlayHookTarget;
 static u32 sOverlayEntries;
+static u32 sOverlayBase; // sEntryCount before the overlays: what the cache holds comes after
 static u32 sOverlaysWithSites;
 static u32 sVblankRoutine;
 
@@ -359,6 +360,8 @@ bool ShadowInstall::WantsOverlays()
 {
     sOverlayEntries = 0;
     sOverlaysWithSites = 0;
+    sStaticFromOverlays = 0;
+    sOverlayBase = sEntryCount;
     return sRegion2Ok; // through the FS_StartOverlay hook, or else from vblank
 }
 
@@ -396,6 +399,82 @@ void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
 clear:
     memset((void*)ram, 0, ramSize);
     dcacheOff(cache);
+}
+
+// The overlays' scan result, cached on the card by the arm7: what the overlay
+// pass added to sEntries, after three counters and the entry count. It holds
+// only for this loader (its code) and this static arm9 scan result.
+extern "C" u8 __text_start[], __text_end[];
+static_assert(sizeof(Entry) == 32, "the cache writes entries as 8 words");
+
+u32 ShadowInstall::CacheKey()
+{
+    if (!sRegion2Ok)
+        return 0;
+    u32 h = 2166136261u;
+    auto mix = [&](u32 w) { h = (h ^ w) * 16777619u; };
+    for (const u32* p = (const u32*)__text_start; p < (const u32*)__text_end; p++)
+        mix(*p);
+    mix(SHADOW_MAX_SITES);
+    mix((u32)sUncompress);
+    mix(sArm9Start);
+    mix(sArm9Size);
+    mix(sAutoloadFrom);
+    mix(sOverlayBase);
+    for (u32 i = 0; i < sOverlayBase; i++)
+        for (u32 k = 0; k < 8; k++)
+            mix(((const u32*)&sEntries[i])[k]);
+    return h | 1;
+}
+
+u32 ShadowInstall::CacheWords()
+{
+    return 4 + (sEntryCount - sOverlayBase) * 8;
+}
+
+u32 ShadowInstall::CacheWord(u32 i)
+{
+    switch (i)
+    {
+        case 0: return sStaticFromOverlays;
+        case 1: return sOverlayEntries;
+        case 2: return sOverlaysWithSites;
+        case 3: return sEntryCount - sOverlayBase;
+    }
+    i -= 4;
+    return ((const u32*)&sEntries[sOverlayBase + i / 8])[i % 8];
+}
+
+bool ShadowInstall::CacheLoad(u32 words, u32 (*next)())
+{
+    u32 head[4] = { 0, 0, 0, 0 };
+    u32 count = 0;
+    bool ok = sRegion2Ok && words >= 4;
+    for (u32 i = 0; i < words; i++)
+    {
+        u32 w = next();
+        if (!ok)
+            continue;
+        if (i < 4)
+        {
+            head[i] = w;
+            if (i == 3)
+            {
+                count = w;
+                ok = words == 4 + count * 8 && count <= SHADOW_MAX_SITES - sOverlayBase;
+            }
+            continue;
+        }
+        ((u32*)&sEntries[sOverlayBase])[i - 4] = w;
+    }
+    if (!ok)
+        return false;
+    sEntryCount = sOverlayBase + count;
+    sStaticFromOverlays = head[0];
+    sOverlayEntries = head[1];
+    sOverlaysWithSites = head[2];
+    LOG_DEBUG("Shadow: overlay scan from the cache, %u entries\n", count);
+    return true;
 }
 
 // After the stubs: the overlays' patches, a group (id, the patches, how many) per

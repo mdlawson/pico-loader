@@ -442,6 +442,29 @@ static void handleArm7Command(u32 command)
             ipc_sendWordDirect(1);
             break;
         }
+        case IPC_COMMAND_ARM9_SHADOW_CACHE_KEY:
+        {
+            ipc_sendWordDirect(ShadowInstall::CacheKey());
+            break;
+        }
+        case IPC_COMMAND_ARM9_SHADOW_CACHE_LOAD:
+        {
+            u32 words = receiveFromArm7();
+            ipc_sendWordDirect(ShadowInstall::CacheLoad(words, receiveFromArm7) ? 1 : 0);
+            break;
+        }
+        case IPC_COMMAND_ARM9_SHADOW_CACHE_SAVE:
+        {
+            u32 words = ShadowInstall::CacheWords();
+            while (ipc_isSendFifoFull());
+            ipc_sendWordDirect(words);
+            for (u32 i = 0; i < words; i++)
+            {
+                while (ipc_isSendFifoFull());
+                ipc_sendWordDirect(ShadowInstall::CacheWord(i));
+            }
+            break;
+        }
         case IPC_COMMAND_ARM9_SET_AP_INFO:
         {
             handleSetAPInfoCommand();

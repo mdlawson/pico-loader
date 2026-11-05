@@ -668,12 +668,146 @@ static bool isClear(u32 ram, u32 ramSize)
     return true;
 }
 
+// The scan's result is kept in RTS_STATE_DIRECTORY/<game code>.shd: this
+// header, then the arm9's words (IPC_COMMAND_ARM9_SHADOW_CACHE_SAVE). It holds
+// while the header matches: the same loader and static scan (the arm9's key)
+// and the same rom file.
+#define SHADOW_CACHE_MAGIC 0x31434853 // 'SHC1'
+struct shadow_cache_header_t
+{
+    u32 magic;
+    u32 key9;
+    u32 gameCode;
+    u32 headerCrc;
+    u32 romSize;
+    u32 romStamp;   // the file's date and time
+    u32 romOffset;
+    u32 overlayTable[2];
+    u32 words;
+    u32 sum;        // of the words
+};
+
+static u32 sCacheBuffer[64];
+
+static u32 cacheSum(u32 sum, const u32* words, u32 count)
+{
+    for (u32 i = 0; i < count; i++)
+        sum = (sum ^ words[i]) * 16777619u;
+    return sum;
+}
+
+static bool loadShadowCache(const char* path, shadow_cache_header_t& want)
+{
+    FIL file;
+    UINT bytesRead = 0;
+    if (f_open(&file, path, FA_OPEN_EXISTING | FA_READ) != FR_OK)
+        return false;
+    shadow_cache_header_t have;
+    bool ok = f_read(&file, &have, sizeof(have), &bytesRead) == FR_OK && bytesRead == sizeof(have);
+    want.words = have.words;
+    want.sum = have.sum;
+    ok = ok && memcmp(&have, &want, sizeof(have)) == 0 && have.words >= 4 && have.words <= 0x10000
+        && f_size(&file) == sizeof(have) + have.words * 4;
+    // the sum first: the arm9 gets only what was written whole
+    u32 sum = 2166136261u;
+    for (u32 done = 0; ok && done < have.words;)
+    {
+        u32 step = have.words - done;
+        if (step > 64)
+            step = 64;
+        ok = f_read(&file, sCacheBuffer, step * 4, &bytesRead) == FR_OK && bytesRead == step * 4;
+        sum = cacheSum(sum, sCacheBuffer, step);
+        done += step;
+    }
+    if (!ok || sum != have.sum || f_lseek(&file, sizeof(have)) != FR_OK)
+    {
+        f_close(&file);
+        return false;
+    }
+    sendToArm9(IPC_COMMAND_ARM9_SHADOW_CACHE_LOAD);
+    sendToArm9(have.words);
+    for (u32 done = 0; done < have.words;)
+    {
+        u32 step = have.words - done;
+        if (step > 64)
+            step = 64;
+        if (f_read(&file, sCacheBuffer, step * 4, &bytesRead) != FR_OK || bytesRead != step * 4)
+            memset(sCacheBuffer, 0xFF, sizeof(sCacheBuffer)); // the arm9 turns down what doesn't add up
+        for (u32 i = 0; i < step; i++)
+            sendToArm9(sCacheBuffer[i]);
+        done += step;
+    }
+    f_close(&file);
+    return receiveFromArm9() == 1;
+}
+
+static void saveShadowCache(const char* path, shadow_cache_header_t& header)
+{
+    sendToArm9(IPC_COMMAND_ARM9_SHADOW_CACHE_SAVE);
+    header.words = receiveFromArm9();
+    FIL file;
+    UINT bytesWritten = 0;
+    bool ok = f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK;
+    // the header goes in last: a cut-short file never matches
+    header.magic = 0;
+    header.sum = 2166136261u;
+    ok = ok && f_write(&file, &header, sizeof(header), &bytesWritten) == FR_OK;
+    for (u32 done = 0; done < header.words;)
+    {
+        u32 step = header.words - done;
+        if (step > 64)
+            step = 64;
+        for (u32 i = 0; i < step; i++)
+            sCacheBuffer[i] = receiveFromArm9();
+        header.sum = cacheSum(header.sum, sCacheBuffer, step);
+        ok = ok && f_write(&file, sCacheBuffer, step * 4, &bytesWritten) == FR_OK && bytesWritten == step * 4;
+        done += step;
+    }
+    header.magic = SHADOW_CACHE_MAGIC;
+    ok = ok && f_lseek(&file, 0) == FR_OK && f_write(&file, &header, sizeof(header), &bytesWritten) == FR_OK;
+    f_close(&file);
+    if (!ok)
+        f_unlink(path);
+    LOG_DEBUG("Shadow: cache %s %s, %u words\n", path, ok ? "written" : "not written", header.words);
+}
+
 void NdsLoader::ShadowScanOverlays()
 {
     sendToArm9(IPC_COMMAND_ARM9_SHADOW_OVERLAYS);
     if (!receiveFromArm9())
         return;
     u32 romOffset = TWL_SHARED_MEMORY->ntrSharedMem.romOffset;
+
+    sendToArm9(IPC_COMMAND_ARM9_SHADOW_CACHE_KEY);
+    shadow_cache_header_t cache;
+    memset(&cache, 0, sizeof(cache));
+    cache.magic = SHADOW_CACHE_MAGIC;
+    cache.key9 = receiveFromArm9();
+    cache.gameCode = _romHeader.gameCode;
+    cache.headerCrc = _romHeader.headerCrc;
+    cache.romSize = f_size(&_romFile);
+    cache.romOffset = romOffset;
+    cache.overlayTable[0] = _romHeader.arm9OverlayTableOffset;
+    cache.overlayTable[1] = _romHeader.arm9OverlayTableSize;
+    char cachePath[48];
+    cachePath[0] = 0;
+    if (cache.key9 && TWL_SHARED_MEMORY->exitRequest.rts.magic == RTS_INFO_MAGIC)
+    {
+        static FILINFO info; // big with long names
+        if (f_stat(_romPath, &info) == FR_OK)
+            cache.romStamp = (info.fdate << 16) | info.ftime;
+        char code[5];
+        for (int i = 0; i < 4; i++)
+        {
+            char c = (char)(_romHeader.gameCode >> (8 * i));
+            bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+            code[i] = ok ? c : '_';
+        }
+        code[4] = 0;
+        mini_snprintf(cachePath, sizeof(cachePath), RTS_STATE_DIRECTORY "/%s.shd", code);
+        if (loadShadowCache(cachePath, cache))
+            return;
+    }
     u32 count = _romHeader.arm9OverlayTableSize / 32;
     if (count > SHADOW_OVERLAYS_MAX)
         count = SHADOW_OVERLAYS_MAX;
@@ -752,6 +886,8 @@ void NdsLoader::ShadowScanOverlays()
         scanned++;
     }
     LOG_DEBUG("Shadow: %u of %u overlays scanned\n", scanned, count);
+    if (cachePath[0])
+        saveShadowCache(cachePath, cache);
 }
 
 void NdsLoader::ApplyArm7Patches()

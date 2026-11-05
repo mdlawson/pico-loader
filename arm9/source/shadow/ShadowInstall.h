@@ -28,6 +28,18 @@ namespace ShadowInstall
     /// @param entry Its overlay table entry.
     void ScanOverlay(const u32* entry, u32 fileSize);
 
+    /// @brief After WantsOverlays: what the overlay scan result depends on, as
+    ///        far as the arm9 knows (this loader, the static scan); 0: no cache.
+    u32 CacheKey();
+
+    /// @brief After the overlay scans: the result as words, for the cache.
+    u32 CacheWords();
+    u32 CacheWord(u32 i);
+
+    /// @brief In place of the overlay scans: a cached result, words from next.
+    ///        Takes all of them either way; false leaves the result empty.
+    bool CacheLoad(u32 words, u32 (*next)());
+
     /// @brief The space Install needs, 0 when there's nothing to do.
     u32 SpaceNeeded();
 
