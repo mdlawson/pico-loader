@@ -512,6 +512,8 @@ static void fifoSendFromArm9(const u32* words, u32 count)
     REG_IPCFIFOCNT = (cnt & FIFOCNT_WRITABLE) | 0x4000;
 }
 
+static u32 sGamePermissions; // set while stateSave has the protection unit opened
+
 static void buildHeader(state_header_t* h, void* block)
 {
     memset(h, 0, 512);
@@ -543,7 +545,7 @@ static void buildHeader(state_header_t* h, void* block)
     h->dataCacheable = cp15Read(3);
     h->insnCacheable = cp15Read(4);
     h->writeBufferable = cp15Read(5);
-    h->dataPermissions = cp15Read(6);
+    h->dataPermissions = sGamePermissions ? sGamePermissions : cp15Read(6);
     h->insnPermissions = cp15Read(7);
     for (int i = 0; i < 8; i++)
         h->regions[i] = cp15Read(8 + i);
@@ -1260,9 +1262,11 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
 const char* stateSave(void* block, int slot, void (*progress)(u32 done, u32 total))
 {
     u32 permissions = cp15Read(6);
+    sGamePermissions = permissions; // the header keeps the game's, not the opened ones
     asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(0x11111111) : "memory");
     const char* problem = save(block, slot, progress);
     asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(permissions) : "memory");
+    sGamePermissions = 0;
     return problem;
 }
 
