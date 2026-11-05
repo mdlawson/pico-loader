@@ -319,12 +319,60 @@ u32 command(u32 cmd, u32 sector, u32 address, u32 sectorCount)
     return sRts->menuState;
 }
 
+// The zero map of the slot sZeroSlot (0: none read): a bit per 2 KB block of
+// its file, set when the block was all zero and the save skipped it. Writes are
+// one sector per card command, so this is most of what makes saving quicker.
+static u32 sZero[STATE_ZERO_MAP_SIZE / 4];
+static int sZeroSlot;
+static int sZeroValid;
+
+static int zeroBlock(const volatile u32* p)
+{
+    u32 any = 0;
+    for (u32 i = 0; i < STATE_ZERO_BLOCK / 4; i += 4)
+        any |= p[i] | p[i + 1] | p[i + 2] | p[i + 3];
+    return any == 0;
+}
+
 // Never anything outside the state file: offset and size are checked here.
+// From STATE_VRAM on, while a save keeps a zero map, the all-zero blocks of
+// memory the arm9 can read are left out and marked instead.
 static int writeState(u32 offset, u32 address, u32 size)
 {
     if ((offset | size) & 511 || offset + size > STATE_END || offset + size < offset || !sSlotSector)
         return 0;
-    command(RTS_MENU_STATE_SDWRITE, sSlotSector + offset / 512, address, size / 512);
+    if (!sZeroValid || offset + size <= STATE_VRAM)
+    {
+        command(RTS_MENU_STATE_SDWRITE, sSlotSector + offset / 512, address, size / 512);
+        return 1;
+    }
+    // whole blocks only here (all the saves are), so no block is half written
+    if ((offset | size) & (STATE_ZERO_BLOCK - 1) || offset < STATE_VRAM)
+        return 0;
+    int arm9 = address >= 0x02000000 && address < 0x02400000;
+    const u32 per = STATE_ZERO_BLOCK / 512;
+    u32 first = offset / STATE_ZERO_BLOCK, count = size / STATE_ZERO_BLOCK, run = 0;
+    for (u32 b = 0; b <= count; b++)
+    {
+        int zero = b < count && arm9 && zeroBlock((const volatile u32*)(address + b * STATE_ZERO_BLOCK));
+        if (b < count)
+        {
+            u32 bit = 1u << ((first + b) & 31);
+            if (zero)
+                sZero[(first + b) >> 5] |= bit;
+            else
+                sZero[(first + b) >> 5] &= ~bit;
+        }
+        if (b < count && !zero)
+        {
+            run++;
+            continue;
+        }
+        if (run)
+            command(RTS_MENU_STATE_SDWRITE, sSlotSector + (first + b - run) * per,
+                address + (b - run) * STATE_ZERO_BLOCK, run * per);
+        run = 0;
+    }
     return 1;
 }
 
@@ -523,18 +571,22 @@ static void buildHeader(state_header_t* h, void* block)
 
 #define MAIN_STEP 0x40000
 
-const char* stateSave(void* block, int slot, void (*progress)(u32 done, u32 total))
+static const char* save(void* block, int slot, void (*progress)(u32 done, u32 total))
 {
     sRts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
     sSlotSector = slotSector(slot);
     if (sSlotSector == 0)
         return "no state file";
+    // a fresh zero map, kept as the slot's while it is written
+    memset(sZero, 0, sizeof(sZero));
+    sZeroSlot = slot;
+    sZeroValid = 1;
 
     // eleven single steps, main ram in MAIN_STEP parts around the stash in scratch parts
     const u32 total = 11 + 0x100000 / MAIN_STEP + (0x400000 - 0x100000 - RTS_STASH_SIZE + MAIN_STEP - 1) / MAIN_STEP
         + RTS_STASH_SIZE / SCRATCH_SIZE;
     u32 done = 0;
-#define STEP(x) do { if (!(x)) return "write refused"; progress(++done, total); } while (0)
+#define STEP(x) do { if (!(x)) { sZeroSlot = 0; sZeroValid = 0; return "write refused"; } progress(++done, total); } while (0)
 
     // no valid header while the rest is being written
     memset(__scratch, 0, 512);
@@ -599,7 +651,9 @@ const char* stateSave(void* block, int slot, void (*progress)(u32 done, u32 tota
     }
 
     command(RTS_MENU_STATE_FIFO_QUERY, 0, (u32)sFifo7, 0);
+    STEP(writeState(STATE_ZERO_MAP, (u32)sZero, STATE_ZERO_MAP_SIZE));
     buildHeader((state_header_t*)__scratch, block);
+    ((state_header_t*)__scratch)->zeroMap = 1;
     STEP(writeState(STATE_HEADER, (u32)__scratch, 512));
     while (done < total)
         progress(++done, total);
@@ -611,13 +665,67 @@ const char* stateSave(void* block, int slot, void (*progress)(u32 done, u32 tota
 
 static state_header_t sHeader;
 
+// The slot's zero map, from its header (a slot written by this menu since has
+// its own in sZero already).
+static int zeroMapFor(int slot, u32 sector)
+{
+    if (sZeroSlot == slot)
+        return 1;
+    sZeroSlot = 0;
+    sZeroValid = 0;
+    if (command(RTS_MENU_STATE_SDREAD, sector + STATE_HEADER / 512, (u32)sZero, 1) != RTS_MENU_STATE_DONE)
+        return 0;
+    const state_header_t* h = (const state_header_t*)sZero;
+    int mapped = h->magic == STATE_MAGIC && h->version >= 5 && h->zeroMap == 1;
+    if (mapped && command(RTS_MENU_STATE_SDREAD, sector + STATE_ZERO_MAP / 512, (u32)sZero,
+            STATE_ZERO_MAP_SIZE / 512) != RTS_MENU_STATE_DONE)
+        return 0;
+    sZeroSlot = slot;
+    sZeroValid = mapped;
+    return 1;
+}
+
 int readSlot(int slot, u32 offset, u32 address, u32 size)
 {
     u32 sector = slotSector(slot);
     if ((offset | size) & 511 || offset + size > STATE_END || offset + size < offset || !sector)
         return 0;
-    return command(RTS_MENU_STATE_SDREAD, sector + offset / 512, address, size / 512)
-        == RTS_MENU_STATE_DONE;
+    if (offset + size <= STATE_VRAM)
+        return command(RTS_MENU_STATE_SDREAD, sector + offset / 512, address, size / 512)
+            == RTS_MENU_STATE_DONE;
+    if (!zeroMapFor(slot, sector))
+        return 0;
+    // the skipped sectors are zero, filled here: memory the arm9 can reach
+    // only (main memory, the scratch and vram copies are)
+    int arm9 = address >= 0x02000000 && address < 0x02400000;
+    u32 first = offset / 512, count = size / 512, run = 0, filled = 0;
+    for (u32 s = 0; s <= count; s++)
+    {
+        u32 block = (first + s) / (STATE_ZERO_BLOCK / 512);
+        int zero = s < count && sZeroValid && first + s >= STATE_VRAM / 512
+            && (sZero[block >> 5] >> (block & 31) & 1);
+        if (zero && !arm9)
+            return 0; // nothing to fill it with: the file holds stale sectors there
+        if (s < count && !zero)
+        {
+            run++;
+            continue;
+        }
+        if (run && command(RTS_MENU_STATE_SDREAD, sector + first + s - run, address + (s - run) * 512, run)
+            != RTS_MENU_STATE_DONE)
+            return 0;
+        run = 0;
+        if (zero)
+        {
+            vu32* p = (vu32*)(address + s * 512);
+            for (u32 i = 0; i < 128; i++)
+                p[i] = 0;
+            filled = 1;
+        }
+    }
+    if (filled)
+        dcFlushAll(); // the next arm7 command reads memory as it is
+    return 1;
 }
 
 static int readState(u32 offset, u32 address, u32 size)
@@ -1145,6 +1253,17 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     *broken = 0;
     return 0;
 #undef STEP
+}
+
+// Saving reads main memory on the arm9 too (the zero map), the arm7's top 128
+// KB with it: open every region to privileged access meanwhile, as for loads.
+const char* stateSave(void* block, int slot, void (*progress)(u32 done, u32 total))
+{
+    u32 permissions = cp15Read(6);
+    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(0x11111111) : "memory");
+    const char* problem = save(block, slot, progress);
+    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(permissions) : "memory");
+    return problem;
 }
 
 const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* broken)

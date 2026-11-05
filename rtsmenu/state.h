@@ -8,8 +8,8 @@
 #include <stdint.h>
 
 #define STATE_MAGIC             0x53545250 // 'PRTS'
-#define STATE_VERSION           4 // 2: with the arm7 context; 3: ipc fifo words, more arm7 registers;
-                                  // 4: the arm9 timers' counts and measured reloads
+#define STATE_VERSION           5 // 2: with the arm7 context; 3: ipc fifo words, more arm7 registers;
+                                  // 4: the arm9 timers' counts and measured reloads; 5: the zero map
 
 #define STATE_HEADER            0x000000 // state_header_t, 0x200
 #define STATE_ARM9_IO           0x000200 // 0x1100: 0x04000000-0x04000FFF, then 0x04001000-0x040010FF;
@@ -18,6 +18,11 @@
 #define STATE_ARM7_IO           0x001400 // 0x400: the arm7 context, ARM7_CTX_* below
 #define ARM7_CTX_SIZE           0x100
 #define STATE_EXTRA             0x001800 // 0x200, version 4: state_extra_t
+#define STATE_ZERO_MAP          0x001A00 // 0x200, version 5 with zeroMap: a bit per 2 KB block of the
+                                         // file (bit b & 31 of word b >> 5), set when the block is all
+                                         // zero and was not written; only from STATE_VRAM on
+#define STATE_ZERO_MAP_SIZE     0x200
+#define STATE_ZERO_BLOCK        0x800
 #define STATE_ITCM              0x004000 // 0x8000, read at 0x01FF8000
 #define STATE_DTCM              0x00C000 // 0x4000, read at the dtcm base
 #define STATE_PALETTE           0x010000 // 0x800, 0x05000000
@@ -86,6 +91,9 @@ typedef struct
     uint16_t timerReload9[4];
     uint32_t timerMeasured9;    // bit per timer: timerReload9 is valid
 
+    // version 5: 1 when STATE_ZERO_MAP is valid
+    uint32_t zeroMap;
+
 } state_header_t;
 
 #define STATE_EXTRA_MAGIC       0x34585250 // 'PRX4'
@@ -107,6 +115,8 @@ typedef struct
 _Static_assert(sizeof(state_header_t) <= 0x200, "state header is one sector");
 _Static_assert(sizeof(state_extra_t) <= 0x200, "extra is one sector");
 _Static_assert(STATE_ARM7_IO + 0x400 <= STATE_EXTRA, "extra after the arm7 context");
+_Static_assert(STATE_ZERO_MAP + STATE_ZERO_MAP_SIZE <= STATE_ITCM && STATE_END / STATE_ZERO_BLOCK / 8 <= STATE_ZERO_MAP_SIZE, "zero map fits");
+_Static_assert(STATE_VRAM % STATE_ZERO_BLOCK == 0, "the mapped part starts on a block");
 _Static_assert(STATE_ARM9_IO + STATE_ARM9_IO_SIZE <= STATE_ARM7_IO, "io dump fits");
 _Static_assert(STATE_VRAM + 0xA4000 <= STATE_MAIN_RAM, "vram fits");
 _Static_assert(STATE_MAIN_RAM + 0x400000 == STATE_END, "main ram ends the file");
