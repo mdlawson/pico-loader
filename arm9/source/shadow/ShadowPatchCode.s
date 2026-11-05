@@ -374,8 +374,25 @@ record_address:
     mov r1, r7
     bx lr
 
-// r0 = value, r1 = address, r2 = bytes. Uses r0-r3, r12.
+// r0 = value, r1 = address, r2 = bytes. Uses r0-r3, r12. A word to a dma
+// channel's control that starts it at once also records what the dma writes.
 record_bytes:
+    cmp r2, #4
+    bne record_io
+    sub r3, r1, #0x04000000
+    subs r3, r3, #0xB8
+    cmpne r3, #0x0C
+    cmpne r3, #0x18
+    cmpne r3, #0x24
+    bne record_io
+    tst r0, #0x80000000 // enabled
+    beq record_io
+    tst r0, #0x38000000 // and at once
+    bne record_io
+    push {r0-r2, lr}
+    bl record_dma
+    pop {r0-r2, lr}
+record_io:
     adrl r12, shadow_data
 1:
     sub r3, r1, #0x04000000
@@ -408,6 +425,55 @@ record_bytes:
     subs r2, r2, #1
     bne 1b
     bx lr
+
+// r0 = the control word, r1 = its address: the source and destination read
+// back on the arm9. Each unit the dma writes into the io pages goes through
+// record_io, at most 0x400 of them. Uses r0-r3, r12.
+record_dma:
+    push {r4-r9, lr}
+    ldr r4, [r1, #-8] // source
+    ldr r5, [r1, #-4] // destination
+    sub r3, r5, #0x04000000
+    cmp r3, #0x2000
+    bhs 9f
+    sub r3, r4, #0x02000000 // a source the game's protection unit lets the cpu read
+    cmp r3, #0x06000000
+    bhs 9f
+    mov r6, r0, lsl #11
+    movs r6, r6, lsr #11 // units: 0 is the most
+    moveq r6, #0x200000
+    cmp r6, #0x400
+    movhi r6, #0x400
+    tst r0, #0x04000000
+    moveq r7, #2
+    movne r7, #4
+    mov r3, r0, lsr #21 // destination: up, down, fixed, up
+    and r3, r3, #3
+    cmp r3, #1
+    rsbeq r8, r7, #0
+    movne r8, r7
+    cmp r3, #2
+    moveq r8, #0
+    mov r3, r0, lsr #23 // source: up, down, fixed
+    and r3, r3, #3
+    cmp r3, #1
+    rsbeq r9, r7, #0
+    movne r9, r7
+    cmp r3, #2
+    moveq r9, #0
+1:
+    cmp r7, #4
+    ldreq r0, [r4]
+    ldrhne r0, [r4]
+    mov r1, r5
+    mov r2, r7
+    bl record_io
+    add r4, r4, r9
+    add r5, r5, r8
+    subs r6, r6, #1
+    bne 1b
+9:
+    pop {r4-r9, pc}
 
 .balign 4
 .global patch_shadow_end

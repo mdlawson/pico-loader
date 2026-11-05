@@ -226,6 +226,8 @@ static bool touches(u32 a, u32 size)
 // on the arm7 the unknown is a channel's 16 bytes, which keep the register
 static inline bool hit(u32 kind, u32 a, u32 size)
 {
+    if (kind == 4 /* IOD */)
+        return (a & 3) == 0 && a <= 0x04000008 && a + size > 0x04000008; // the channel's control, at +8
     return kind == 3 /* IOX */ && !shadow_scan::gTargetArm7 ? true : touches(a, size);
 }
 
@@ -733,7 +735,13 @@ __attribute__((section(".itcm"))) void Scanner::Scan(u32 first, u32 count)
                 v = 0x04000000;
                 start = true;
             }
-            bool unknownPlus = false;
+            bool unknownPlus = false, dmaBase = false;
+            if (!start && !gTargetArm7 && al4(w) && (w & 0x0FE00FFF) == 0x02800301 && ((w >> 16) & 0xF) < 13)
+            {
+                // add rd, rn, #0x04000000: a dma channel's registers, rn = ch * 12 + 0xB0
+                v = 0x04000000;
+                start = dmaBase = true;
+            }
             if (!start && gTargetArm7 && al4(w) && ((w & 0x0FE00FFF) == 0x02800301 || (w & 0x0FE00FFF) == 0x03800301)
                 && ((w >> 16) & 0xF) < 13)
             {
@@ -762,7 +770,7 @@ __attribute__((section(".itcm"))) void Scanner::Scan(u32 first, u32 count)
                     r.val[xd] = xv;
                 }
             }
-            r.kind[rd] = unknownPlus ? IOX : IO;
+            r.kind[rd] = dmaBase ? IOD : unknownPlus ? IOX : IO;
             r.val[rd] = v;
             // conditional loads still give the register on the taken path
             Trace(b.runAddress + off + 4, r, 0);

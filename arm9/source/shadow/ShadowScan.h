@@ -46,6 +46,9 @@ static inline bool IsShadowed(u32 a)
         return o >= 0x10 && o < 0x58;
     }
     u32 o = a - 0x04000000;
+    // a dma channel's control too: a dma started at once into these is recorded
+    if (o >= 0xB8 && o < 0xE0)
+        return (o - 0xB8) % 12 < 4;
     return (o >= 0x10 && o < 0x58) || (o >= 0x330 && o < 0x3C0);
 }
 
@@ -79,7 +82,9 @@ public:
     u32 Overflow() const { return _overflow; }
 
 private:
-    enum : uint8_t { NONE = 0, CONST = 1, IO = 2, IOX = 3 }; // IOX: an io base plus an offset unknown
+    // IOX: an io base plus an offset unknown. IOD (arm9): something unknown plus
+    // 0x04000000, as the sdk's dma setters make a channel's registers
+    enum : uint8_t { NONE = 0, CONST = 1, IO = 2, IOX = 3, IOD = 4 };
     struct Regs { uint8_t kind[16]; u32 val[16]; };
 
     const Block* _blocks;
