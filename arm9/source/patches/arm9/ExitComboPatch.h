@@ -39,11 +39,14 @@ private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.
     OSResetSystemPatch* _osResetSystemPatch;
     u32* _dispatchTail = nullptr;
+    // the twl sdk's dispatcher (clz form): its ldrne lr, =table end, nullptr if not
+    u32* _clzDispatch = nullptr;
+    u32* _patchedAt = nullptr; // the two words the hook took
     u32 _savedTail[2];
     u32 _hookEntry = 0;
     u32* _savedGameWords = nullptr;
-    u32 _savedRegionAddress[7]; // loader_info_t, both reboot code sections and the four pieces
-    u32 _savedRegionSize[7];
+    u32 _savedRegionAddress[8]; // loader_info_t, both reboot code sections, the four pieces, the clz entry
+    u32 _savedRegionSize[8];
     u32 _savedRegionCount = 0;
     u32 _installed = 0;
     u32* _censusLiteral = nullptr;

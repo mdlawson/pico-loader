@@ -28,6 +28,18 @@ static_assert(sDebugVectorFromBlock == 0x71C);
 // bytes vary across SDK versions.
 static const u32 sIrqDispatchTailPattern[] = { 0xE59F1008u, 0xE7910100u, 0xE59FE004u, 0xE12FFF10u };
 
+// The twl sdk's dispatcher picks the lowest pending irq with clz instead:
+//     ldrne lr, =<the table's end>    ; the table's last entry (irq 31)
+//     rsbne r0, r1, #0 / andne r1, r0, r1 / clzne r0, r1
+//     ldrne lr, [lr, -r0, lsl #2]
+//     strne r1, [ip, #4]              ; acknowledge it in IF
+//     blx lr                          ; none pending (eq): lr is the return
+// The hook takes the last two words: ldr pc, =<entry>, where the entry piece puts
+// the strne back, returns on eq, and goes into the hook with r0 = 31 - clz.
+static const u32 sClzDispatchPattern[] =
+    { 0x12610000u, 0x10001001u, 0x116F0F11u, 0x171EE100u, 0x158C1004u, 0xE12FFF3Eu };
+static const u32 sClzEntryWords = 4;
+
 // Retail games fill the gaps between the secure area system calls with random bytes, but
 // some romhacks keep code of their own there. These are words such code jumps or returns
 // with, which the filler of the retail games checked never holds.
@@ -55,6 +67,13 @@ bool ExitComboPatch::FindPatchTarget(PatchContext& patchContext)
     {
         LOG_DEBUG("Irq dispatch tail found at 0x%p\n", _dispatchTail);
     }
+    else if (u32* clz = patchContext.FindPattern32(sClzDispatchPattern, 16); // the search takes 16 bytes
+        clz && clz[4] == sClzDispatchPattern[4] && clz[5] == sClzDispatchPattern[5]
+        && (clz[-1] & 0xFFFFF000) == 0x159FE000) // ldrne lr, [pc, #imm]
+    {
+        _clzDispatch = clz - 1;
+        LOG_DEBUG("Irq dispatcher (clz) found at 0x%p\n", _clzDispatch);
+    }
     else
     {
         LOG_DEBUG("Irq dispatch tail not found\n");
@@ -64,7 +83,7 @@ bool ExitComboPatch::FindPatchTarget(PatchContext& patchContext)
 
 void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
 {
-    if (!_dispatchTail)
+    if (!_dispatchTail && !_clzDispatch)
         return;
 
     // A game without an OS_ResetSystem of its own gets the reboot code from here.
@@ -92,11 +111,12 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
         SECTION_SIZE(patch_exitcombo_teardown),
         SECTION_SIZE(patch_exitcombo_wait),
         SECTION_SIZE(patch_exitcombo_check),
-        SECTION_SIZE(patch_exitcombo_hook)
+        SECTION_SIZE(patch_exitcombo_hook),
+        sClzEntryWords * 4 // the clz dispatcher's entry piece, last so the others land as before
     };
-    constexpr u32 sizeCount = sizeof(sizes) / sizeof(sizes[0]);
+    const u32 sizeCount = sizeof(sizes) / sizeof(sizes[0]) - (_clzDispatch ? 0 : 1);
     u32 first = emitRebootCode ? 0 : 3;
-    void* addresses[sizeCount];
+    void* addresses[sizeof(sizes) / sizeof(sizes[0])];
     auto& patchHeap = patchContext.GetPatchHeap();
     if (!patchHeap.CanAllocInOrder(&sizes[first], sizeCount - first, &addresses[first]))
     {
@@ -149,9 +169,25 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
         rebootCode->GetPoolAtTarget(), rebootCode->GetBootLoaderBinariesFunction());
     auto wait = patchCodes.AddUniquePatchCode<ExitComboWaitPatchCode>(patchHeap, teardown);
     auto check = patchCodes.AddUniquePatchCode<ExitComboCheckPatchCode>(patchHeap, wait);
+    u32 irqTable, irqReturn;
+    if (_dispatchTail)
+    {
+        irqTable = _dispatchTail[4];  // irq table address literal
+        irqReturn = _dispatchTail[5]; // irq return address literal
+    }
+    else
+    {
+        // the literal holds the table's end (irq 31); the return is after the
+        // blx where the dispatcher runs (itcm, from an autoload)
+        u32 imm = _clzDispatch[0] & 0xFFF;
+        irqTable = *(const u32*)((u8*)_clzDispatch + 8 + imm) - 31 * 4;
+        irqReturn = (u32)&_clzDispatch[7];
+        if (auto autoload = patchContext.GetAutoloadAdjuster())
+            irqReturn = autoload->AdjustInitialToFinal(irqReturn);
+        LOG_DEBUG("Irq table 0x%x, return 0x%x\n", irqTable, irqReturn);
+    }
     auto hook = patchCodes.AddUniquePatchCode<ExitComboHookPatchCode>(patchHeap, blockAddress, check,
-        _dispatchTail[4],  // irq table address literal
-        _dispatchTail[5]); // irq return address literal
+        irqTable, irqReturn);
 
     LOG_DEBUG("Exit combo hook 0x%p, check 0x%p, wait 0x%p, teardown 0x%p\n", hook->GetEntryFunction(),
         check->GetEntryFunction(), wait->GetEntryFunction(), teardown->GetEntryFunction());
@@ -167,14 +203,35 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
         return;
     }
 
-    _savedTail[0] = _dispatchTail[0];
-    _savedTail[1] = _dispatchTail[1];
     _hookEntry = (u32)hook->GetEntryFunction();
     _censusLiteral = hook->GetCensusLiteralAtTarget();
     _blockAddress = blockAddress;
     _twlSdk = patchContext.GetSdkVersion().IsTwlSdk() ? 1 : 0;
-    _dispatchTail[0] = 0xE51FF004; // ldr pc,= address
-    _dispatchTail[1] = _hookEntry;
+    u32 jumpTo = _hookEntry;
+    _patchedAt = _dispatchTail;
+    if (_clzDispatch)
+    {
+        // strne r1, [ip, #4] / bxeq lr / rsb r0, r0, #31 / b hook
+        u32* entry = (u32*)patchHeap.Alloc(sClzEntryWords * 4);
+        if (entry != addresses[7])
+        {
+            LOG_WARNING("Exit combo pieces not where planned, left out\n");
+            delete[] _savedGameWords;
+            _savedGameWords = nullptr;
+            return;
+        }
+        entry[0] = 0x158C1004;
+        entry[1] = 0x012FFF1E;
+        entry[2] = 0xE260001F;
+        entry[3] = 0xEA000000 | (((_hookEntry - ((u32)&entry[3] + 8)) >> 2) & 0xFFFFFF);
+        jumpTo = (u32)entry;
+        _patchedAt = &_clzDispatch[5];
+    }
+    _savedTail[0] = _patchedAt[0];
+    _savedTail[1] = _patchedAt[1];
+    _patchedAt[0] = 0xE51FF004; // ldr pc,= address
+    _patchedAt[1] = jumpTo;
+    _hookEntry = jumpTo;
     _installed = 1;
 
     LOG_DEBUG("Exit combo enabled\n");
@@ -243,10 +300,10 @@ void ExitComboPatch::Deactivate()
         return;
 
     // the hook only if it still jumps into the pieces
-    if (_dispatchTail[0] == 0xE51FF004 && _dispatchTail[1] == _hookEntry)
+    if (_patchedAt[0] == 0xE51FF004 && _patchedAt[1] == _hookEntry)
     {
-        _dispatchTail[0] = _savedTail[0];
-        _dispatchTail[1] = _savedTail[1];
+        _patchedAt[0] = _savedTail[0];
+        _patchedAt[1] = _savedTail[1];
     }
 
     // and what the game had where the pieces and the reboot code went

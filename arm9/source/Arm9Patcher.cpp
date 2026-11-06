@@ -131,7 +131,12 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
                 : FindMIiUncompressBackward(romHeader->arm9LoadAddress, sdkVersion));
 #endif
 
-            if (sdkVersion.IsTwlSdk())
+            // the twl sdk's 4-word entries, except in its ds-only builds (golden
+            // sun dark dawn), which keep the 3 words of before
+            u32 listBytes = moduleParams->autoloadListEnd - moduleParams->autoloadListStart;
+            bool sdk5Entries = sdkVersion.IsTwlSdk() && listBytes % sizeof(autoload_list_entry_sdk5_t) == 0
+                && (romHeader->unitCode != 0 || listBytes % sizeof(autoload_list_entry_t) != 0);
+            if (sdk5Entries)
             {
                 arm9Autoload = std::make_unique<AutoloadAdjuster<autoload_list_entry_sdk5_t>>(
                     (autoload_list_entry_sdk5_t*)moduleParams->autoloadListStart,

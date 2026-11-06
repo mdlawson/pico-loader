@@ -393,21 +393,29 @@ bool ShadowInstall::WantsOverlays()
 }
 
 typedef void (*uncompress_func_t)(void* compressedEnd);
+static u32 sOverlaysScanned, sOverlaysPacked; // for the log: seen, and left compressed
 
 void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
 {
     u32 id = entry[0], ram = entry[1], ramSize = entry[2], compressed = entry[7];
+    sOverlaysScanned++;
     dc_flushAll();
     u32 cache = dcacheOn();
     if ((compressed >> 24) & 1)
     {
         u32 packed = compressed & 0xFFFFFF;
         if (!sUncompress || packed == 0 || packed > fileSize)
+        {
+            sOverlaysPacked++;
             goto clear;
+        }
         u32 end = ram + packed;
         // the footer: the uncompressed size grows the end by the word before it
         if (*(u32*)(end - 4) + packed > ramSize)
+        {
+            sOverlaysPacked++;
             goto clear;
+        }
         ((uncompress_func_t)sUncompress)((void*)end);
     }
     if (sRegion2Ok && sEntryCount < SHADOW_MAX_SITES && sSpanCount < SHADOW_MAX_OVERLAYS)
@@ -999,13 +1007,26 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
     else if (groupsMade)
         sVblankRoutine = run((const void*)shadow_vblank);
 
-    // region 2 off: the space is in the arm7's corner the sdk guards from the arm9
+    // region 2 off: the space is in the arm7's corner the sdk guards from the arm9.
+    // Only where region 2 is that guard: the twl sdk's (ds mode too) is the 4 KB
+    // shared page, and its main memory region takes the corner in already.
+    bool guards = false;
     for (u32 i = 0; i < sRegion2LiteralCount; i++)
+    {
+        u32 v = *(const u32*)sRegion2Literal[i];
+        u32 base = v & ~0xFFFu, bytes = 2u << ((v >> 1) & 0x1F);
+        u32 off = runAddress & 0x3FFFFF;
+        for (u32 mirror = 0x02000000; mirror < 0x03000000; mirror += 0x400000)
+            if ((v & 1) && mirror + off < base + bytes && base < mirror + off + size)
+                guards = true;
+    }
+    for (u32 i = 0; guards && i < sRegion2LiteralCount; i++)
         *(u32*)sRegion2Literal[i] = 0;
-    for (u32 i = 0; i < sRegion2McrCount; i++)
+    for (u32 i = 0; guards && i < sRegion2McrCount; i++)
         *(u32*)sRegion2Mcr[i] = 0xE1A00000; // mov r0, r0
+    LOG_DEBUG("Shadow: region 2 %s\n", guards ? "off (it guarded the space)" : "left (not over the space)");
     LOG_DEBUG("Shadow at 0x%x: %u stubs of %u (%u out of reach)\n", runAddress, made, sEntryCount, failed);
-    LOG_DEBUG("Shadow: %u overlays, %u sites in %u slots, %u static from overlays\n",
-        groupsMade, overlaySites, l.slots, sStaticFromOverlays);
+    LOG_DEBUG("Shadow: %u overlays, %u sites in %u slots, %u static from overlays (%u scanned, %u not unpacked, uncompress 0x%x)\n",
+        groupsMade, overlaySites, l.slots, sStaticFromOverlays, sOverlaysScanned, sOverlaysPacked, (u32)sUncompress);
     return made != 0;
 }
