@@ -12,4 +12,5 @@ private:
     u32* _fsStartOverlay = nullptr;
     u16 _thumb = false;
     u16 _hybrid = false;
+    u32 _sdk3Rd = 0; // sdk 3: the sinit pointer's register + 1 (flush a word later), 0 otherwise
 };

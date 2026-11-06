@@ -43,6 +43,10 @@ namespace ShadowInstall
     /// @brief The space Install needs, 0 when there's nothing to do.
     u32 SpaceNeeded();
 
+    /// @brief Room for the overlays' stub slots outside the space (main memory the
+    ///        game never uses), for when the space is short. 0: none.
+    void SetExtraSlots(u32 address, u32 size);
+
     /// @brief Puts the code and stubs in the space and patches the sites.
     /// @param space The space, as the loader writes it.
     /// @param runAddress Where the game sees it.

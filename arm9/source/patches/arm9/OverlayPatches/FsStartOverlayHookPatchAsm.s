@@ -24,7 +24,9 @@ fsstartoverlayhook_entry:
     ldr r1, [r5, #8]
     pop {r2}
     blx r2
-    ldr r4, [r5, #0x10]
+.global fsstartoverlayhook_sinitLoad
+fsstartoverlayhook_sinitLoad:
+    ldr r4, [r5, #0x10] // its register put in for sdk 3
     pop {pc}
 
 .balign 4

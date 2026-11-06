@@ -319,6 +319,30 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
         lz77SwiPatch.FindPatchTarget(patchContext);
         lz77SwiPatch.ApplyPatch(patchContext);
     }
+#ifndef RTS_CENSUS
+    // What the patch heap has left goes to the shadow's overlay slots, should its
+    // space in the arm7's arena be short: zeros only (the tail of a clone boot
+    // rom's .parent section), never filler a romhack might keep code in.
+    if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !sdkVersion.IsTwlSdk())
+    {
+        u32 extraSize = patchContext.GetPatchHeap().LargestFree() & ~15u;
+        if (extraSize >= 0x100)
+        {
+            u32* extra = (u32*)patchContext.GetPatchHeap().Alloc(extraSize);
+            bool zeros = true;
+            for (u32 i = 0; i < extraSize / 4 && zeros; i++)
+                zeros = extra[i] == 0;
+            // stub slots are 16 bytes, on 16
+            u32 start = ((u32)extra + 15) & ~15u;
+            u32 size = (extraSize - (start - (u32)extra)) & ~15u;
+            if (zeros)
+            {
+                ShadowInstall::SetExtraSlots(start, size);
+                LOG_DEBUG("Shadow: 0x%x bytes of spare patch heap at 0x%x\n", size, start);
+            }
+        }
+    }
+#endif
     dc_flushAll();
     dc_drainWriteBuffer();
     ic_invalidateAll();

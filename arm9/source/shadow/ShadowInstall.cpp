@@ -537,6 +537,27 @@ struct Layout
 };
 static Layout sLayout;
 
+// Room elsewhere for the overlays' shared slots (what the arm9 patch heap had
+// left, zeros the game never uses), when the space itself is short.
+static u32 sExtraSlots, sExtraSlotsSize;
+
+void ShadowInstall::SetExtraSlots(u32 address, u32 size)
+{
+    sExtraSlots = address;
+    sExtraSlotsSize = size;
+}
+
+// whether the slots go to the extra room (then the space needs that much less)
+static bool slotsElsewhere(const Layout& l, u32 size)
+{
+    return l.size > size && sExtraSlots && l.slots * SHADOW_STUB_SIZE <= sExtraSlotsSize;
+}
+
+static bool fits(const Layout& l, u32 size)
+{
+    return l.size <= size || (slotsElsewhere(l, size) && l.size - l.slots * SHADOW_STUB_SIZE <= size);
+}
+
 // Overlays left out of the space (their entries' overlay values), when it is short.
 static u32 sLeftOut[SHADOW_MAX_OVERLAYS];
 static u32 sLeftOutCount;
@@ -686,7 +707,7 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
             runSites[runs++] = 1;
         }
     }
-    while (layoutFor(count).size > size && sLeftOutCount < SHADOW_MAX_OVERLAYS)
+    while (!fits(layoutFor(count), size) && sLeftOutCount < SHADOW_MAX_OVERLAYS)
     {
         u32 best = 0, bestSites = 0;
         for (u32 r = 0; r < runs; r++)
@@ -704,18 +725,25 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
     {
         u32 overlay = sLeftOut[k];
         sLeftOut[k] = 0;
-        if (layoutFor(count).size > size)
+        if (!fits(layoutFor(count), size))
             sLeftOut[k] = overlay;
     }
     for (u32 k = 0; k < sLeftOutCount; k++)
         if (sLeftOut[k])
             LOG_DEBUG("Shadow: overlay %u left out\n", sLeftOut[k] - 1);
-    while (count && layoutFor(count).size > size)
+    while (count && !fits(layoutFor(count), size))
         count--;
-    LOG_DEBUG("Shadow: 0x%x of 0x%x bytes\n", layoutFor(count).size, size);
     if (count == 0)
         return false;
     const Layout& l = layoutFor(count);
+    const bool elsewhere = slotsElsewhere(l, size);
+    const u32 slotBytes = elsewhere ? 0 : l.slots * SHADOW_STUB_SIZE;
+    LOG_DEBUG("Shadow: 0x%x of 0x%x bytes\n", l.size - (elsewhere ? l.slots * SHADOW_STUB_SIZE : 0), size);
+    if (elsewhere)
+    {
+        memset((void*)sExtraSlots, 0, l.slots * SHADOW_STUB_SIZE);
+        LOG_DEBUG("Shadow: overlay slots at 0x%x, 0x%x bytes\n", sExtraSlots, l.slots * SHADOW_STUB_SIZE);
+    }
 
     memset(space, 0, size);
     memcpy(space, SECTION_START(patch_shadow), SECTION_SIZE(patch_shadow));
@@ -728,7 +756,7 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
         run((const void*)shadow_filled16), run((const void*)shadow_filled32) };
 
     u32 slotsOffset = codeSize + l.fixed * SHADOW_STUB_SIZE;
-    u32 groupsOffset = slotsOffset + l.slots * SHADOW_STUB_SIZE;
+    u32 groupsOffset = slotsOffset + slotBytes;
     u32 recordsOffset = groupsOffset + l.groups * SHADOW_GROUP_SIZE;
     u32* groups = (u32*)((u8*)space + groupsOffset);
     u8* records = (u8*)space + recordsOffset;
@@ -898,7 +926,7 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
                     base = sEntries[j].final & ~3u;
         }
         u32* g = groups + group * (SHADOW_GROUP_SIZE / 4);
-        u32 slot0 = runAddress + slotsOffset + l.slotStart[group] * SHADOW_STUB_SIZE;
+        u32 slot0 = (elsewhere ? sExtraSlots : runAddress + slotsOffset) + l.slotStart[group] * SHADOW_STUB_SIZE;
         g[0] = overlay - 1;
         g[1] = base;
         g[2] = runAddress + recordsOffset + recordByte;

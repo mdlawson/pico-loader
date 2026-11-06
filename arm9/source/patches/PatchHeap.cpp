@@ -148,3 +148,12 @@ void* PatchHeap::Alloc(u32 size)
 
     return result;
 }
+
+u32 PatchHeap::LargestFree() const
+{
+    u32 largest = 0;
+    for (const PatchHeapBlock* cur = _freeBlocks; cur; cur = cur->next)
+        if (cur->size > largest)
+            largest = cur->size;
+    return largest;
+}

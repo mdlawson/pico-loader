@@ -36,6 +36,9 @@ public:
     /// @return True if every allocation would succeed.
     bool CanAllocInOrder(const u32* sizes, u32 count, void** addresses = nullptr) const;
 
+    /// @brief The size of the largest free block (0 when none).
+    u32 LargestFree() const;
+
 private:
     struct PatchHeapBlock
     {

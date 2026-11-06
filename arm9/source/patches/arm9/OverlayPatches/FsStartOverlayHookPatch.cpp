@@ -4,6 +4,10 @@
 #include "FsStartOverlayHookPatch.h"
 
 static const u32 sFSStartOverlayPatternSdk4[] = { 0xE59F10D0u, 0xE1A04000u, 0xE1D100B0u, 0xE3500002u }; // -0xC
+// sdk 3 (New Super Mario Bros.): the same start, its literal further on; the
+// flush's arguments in two loads, so everything after is a word later, and the
+// sinit pointer in a register of the compiler's choice
+static const u32 sFSStartOverlayPatternSdk3[] = { 0xE59F10DCu, 0xE1A04000u, 0xE1D100B0u, 0xE3500002u }; // -0xC
 static const u32 sFSStartOverlayPatternSdk4Thumb[] = { 0x481F1C06u, 0x28028800u, 0x69E8D121u, 0x0E012700u }; // -8
 static const u32 sFSStartOverlayPattern[] = { 0xE3500001u, 0x0A00001Cu, 0xE595001Cu, 0xE3A03000u }; // -0x14
 static const u32 sFSStartOverlayPatternThumb[] = { 0x69E8D023u, 0x0E012600u, 0x42082002u, 0x491BD013u }; // -0x10
@@ -16,6 +20,7 @@ extern u8 __fsstartoverlayhook_end[];
 
 extern u32 fsstartoverlayhook_dcFlushRangeOffset;
 extern u32 fsstartoverlayhook_hookFuncAddress;
+extern "C" u16 fsstartoverlayhook_sinitLoad;
 
 bool FsStartOverlayHookPatch::FindPatchTarget(PatchContext& patchContext)
 {
@@ -28,6 +33,23 @@ bool FsStartOverlayHookPatch::FindPatchTarget(PatchContext& patchContext)
         if (_fsStartOverlay)
         {
             _fsStartOverlay -= 3;
+        }
+        else if ((_fsStartOverlay = patchContext.FindPattern32(sFSStartOverlayPatternSdk3, sizeof(sFSStartOverlayPatternSdk3))) != nullptr)
+        {
+            _fsStartOverlay -= 3;
+            // ldr r0,[r5,#4]; ldr r1,[r5,#8]; bl DC_FlushRange; ldr rX,[r5,#0x10]
+            u32 load = _fsStartOverlay[0xB8 / 4];
+            if (_fsStartOverlay[0xAC / 4] == 0xE5950004u && _fsStartOverlay[0xB0 / 4] == 0xE5951008u
+                && (_fsStartOverlay[0xB4 / 4] >> 24) == 0xEB && (load & 0xFFFF0FFFu) == 0xE5950010u
+                && ((load >> 12) & 0xF) < 8)
+            {
+                _sdk3Rd = ((load >> 12) & 0xF) + 1;
+            }
+            else
+            {
+                LOG_DEBUG("FS_StartOverlay (sdk 3) not as expected\n");
+                _fsStartOverlay = nullptr;
+            }
         }
         else
         {
@@ -124,8 +146,8 @@ void FsStartOverlayHookPatch::ApplyPatch(PatchContext& patchContext)
     }
     else
     {
-        patchOffset = 0xAC;
-        u32 blDcFlushRange = *(u32*)((u8*)_fsStartOverlay + 0xB0);
+        patchOffset = _sdk3Rd ? 0xB0 : 0xAC;
+        u32 blDcFlushRange = *(u32*)((u8*)_fsStartOverlay + patchOffset + 4);
         fsstartoverlayhook_dcFlushRangeOffset = (int)((blDcFlushRange & 0xFFFFFF) << 8) >> 6;
     }
 
@@ -134,6 +156,12 @@ void FsStartOverlayHookPatch::ApplyPatch(PatchContext& patchContext)
 
     u32 entryAddress = (u32)&fsstartoverlayhook_entry - (u32)__fsstartoverlayhook_start + (u32)patch1Address;
     memcpy(patch1Address, __fsstartoverlayhook_start, patch1Size);
+    if (_sdk3Rd)
+    {
+        // the hook's last load (ldr r4, [r5, #0x10]) into the register the game uses
+        u16* load = (u16*)((u8*)patch1Address + ((u32)&fsstartoverlayhook_sinitLoad - (u32)__fsstartoverlayhook_start));
+        *load = (*load & ~7) | (_sdk3Rd - 1);
+    }
 
     if (_thumb)
     {
