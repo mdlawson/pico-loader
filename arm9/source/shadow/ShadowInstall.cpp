@@ -394,6 +394,74 @@ bool ShadowInstall::WantsOverlays()
 
 typedef void (*uncompress_func_t)(void* compressedEnd);
 static u32 sOverlaysScanned, sOverlaysPacked; // for the log: seen, and left compressed
+static u32 sOverlaysLz40; // unpacked here, packed by the game itself
+static u32 windowOf(const Entry& e);
+
+// LZ40, which some games use to pack their own overlays (Golden Sun Dark Dawn):
+// 0x40 and the unpacked size in 24 bits, then flag bytes whose negation marks,
+// from the top bit, which of the next eight items are copies. A copy is a
+// halfword: a 12-bit distance over a 4-bit count, where 0 and 1 take the count
+// from the next byte (+0x10) or halfword (+0x110). Unpacked in place: the file
+// moves to the end of the overlay, and its last bytes wait on the stack, as the
+// output can run a little over the input it hasn't read yet near the end.
+static bool unpackLz40(u8* ram, u32 ramSize, u32 fileSize)
+{
+    if (fileSize < 5 || ram[0] != 0x40 || (u32)(ram[1] | ram[2] << 8 | ram[3] << 16) != ramSize)
+        return false;
+    constexpr u32 TAIL = 256;
+    u8 tail[TAIL];
+    u32 tailFrom = fileSize > TAIL ? fileSize - TAIL : 0;
+    memcpy(tail, ram + tailFrom, fileSize - tailFrom);
+    u8* in = ram + ramSize - fileSize;
+    memmove(in, ram, fileSize);
+    auto rd = [&](u32 i) -> u32 { return i >= tailFrom ? tail[i - tailFrom] : in[i]; };
+    u32 p = 4, o = 0;
+    while (o < ramSize)
+    {
+        if (p >= fileSize)
+            return false;
+        u32 bits = -rd(p++);
+        for (u32 k = 0; k < 8 && o < ramSize; k++, bits <<= 1)
+        {
+            u32 n = 1, disp = 0;
+            if (bits & 0x80)
+            {
+                if (p + 2 > fileSize)
+                    return false;
+                u32 v = rd(p) | rd(p + 1) << 8;
+                p += 2;
+                disp = v >> 4;
+                n = v & 0xF;
+                if (n == 0)
+                {
+                    if (p + 1 > fileSize)
+                        return false;
+                    n = rd(p++) + 0x10;
+                }
+                else if (n == 1)
+                {
+                    if (p + 2 > fileSize)
+                        return false;
+                    n = (rd(p) | rd(p + 1) << 8) + 0x110;
+                    p += 2;
+                }
+                if (disp == 0 || disp > o || n > ramSize - o)
+                    return false;
+            }
+            else if (p >= fileSize)
+                return false;
+            // the input not yet read and not on the stack must stay whole
+            if (p < tailFrom && ram + o + n > in + p)
+                return false;
+            if (disp == 0)
+                ram[o++] = rd(p++);
+            else
+                for (u32 end = o + n; o < end; o++)
+                    ram[o] = ram[o - disp];
+        }
+    }
+    return true;
+}
 
 void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
 {
@@ -418,6 +486,15 @@ void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
         }
         ((uncompress_func_t)sUncompress)((void*)end);
     }
+    else if (fileSize < ramSize && *(const u8*)ram == 0x40)
+    {
+        if (!unpackLz40((u8*)ram, ramSize, fileSize))
+        {
+            sOverlaysPacked++;
+            goto clear;
+        }
+        sOverlaysLz40++;
+    }
     if (sRegion2Ok && sEntryCount < SHADOW_MAX_SITES && sSpanCount < SHADOW_MAX_OVERLAYS)
     {
         sBlockStart = ram;
@@ -432,6 +509,15 @@ void ShadowInstall::ScanOverlay(const u32* entry, u32 fileSize)
             sOverlaysWithSites++;
             if (sSpanCount < SHADOW_MAX_OVERLAYS)
                 sSpans[sSpanCount++] = { id + 1, ram, ramSize };
+            // its windows' entries together, a group each (stable, few entries)
+            for (u32 i = before + 1; i < sEntryCount; i++)
+            {
+                Entry e = sEntries[i];
+                u32 w = windowOf(e), j = i;
+                for (; j > before && windowOf(sEntries[j - 1]) > w; j--)
+                    sEntries[j] = sEntries[j - 1];
+                sEntries[j] = e;
+            }
         }
         sOverlayEntries += sEntryCount - before;
     }
@@ -590,6 +676,24 @@ static bool spanOf(u32 overlay, u32& ram, u32& size)
     return false;
 }
 
+// A group's records are halfwords from its base (words for arm sites, halfwords
+// for thumb ones), so an overlay bigger than that reach (Golden Sun Dark Dawn's
+// first one, 700 KB) gets a group per window of it.
+#define SHADOW_WINDOW_SHIFT 17
+
+static u32 windowOf(const Entry& e)
+{
+    u32 ram = 0, size = 0;
+    if (!e.overlay || !spanOf(e.overlay, ram, size) || e.final < ram)
+        return 0;
+    return (e.final - ram) >> SHADOW_WINDOW_SHIFT;
+}
+
+static u32 groupKey(const Entry& e)
+{
+    return e.overlay | windowOf(e) << 16;
+}
+
 // The layout of the first count entries. Two overlays share a slot only when
 // their memory overlaps: then they can't be in at once.
 static const Layout& layoutFor(u32 count)
@@ -607,13 +711,14 @@ static const Layout& layoutFor(u32 count)
             l.fixed++;
         if (!e.overlay)
             continue;
-        if (e.overlay != last && l.groups <= SHADOW_MAX_OVERLAYS)
+        u32 key = groupKey(e);
+        if (key != last && l.groups <= SHADOW_MAX_OVERLAYS)
         {
             groupOverlay[l.groups] = e.overlay;
             groupSlots[l.groups] = groupCopies[l.groups] = 0;
             l.groups++;
         }
-        last = e.overlay;
+        last = key;
         if (e.type != ENTRY_COPY)
             groupSlots[l.groups - 1]++;
         else
@@ -638,8 +743,10 @@ static const Layout& layoutFor(u32 count)
             {
                 if (start >= l.slotStart[o] + groupSlots[o] || l.slotStart[o] >= start + n || n == 0 || groupSlots[o] == 0)
                     continue;
+                // the windows of one overlay are in at once
                 u32 oram = 0, osize = 0;
-                ok = known && spanOf(groupOverlay[o], oram, osize) && oram < ram + size && ram < oram + osize;
+                ok = known && groupOverlay[o] != groupOverlay[g] && spanOf(groupOverlay[o], oram, osize)
+                    && oram < ram + size && ram < oram + osize;
             }
             if (ok)
                 best = start;
@@ -922,11 +1029,14 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
             i++;
             continue;
         }
+        u32 key = groupKey(sEntries[i]);
         u32 end = i;
-        while (end < count && (sEntries[end].overlay == overlay || !sEntries[end].overlay || leftOut(sEntries[end].overlay)))
+        while (end < count && (groupKey(sEntries[end]) == key || !sEntries[end].overlay || leftOut(sEntries[end].overlay)))
             end++;
         u32 base = 0, spanSize = 0;
-        if (!spanOf(overlay, base, spanSize))
+        if (spanOf(overlay, base, spanSize))
+            base += windowOf(sEntries[i]) << SHADOW_WINDOW_SHIFT;
+        else
         {
             base = 0xFFFFFFFF;
             for (u32 j = i; j < end; j++)
@@ -1026,7 +1136,7 @@ bool ShadowInstall::Install(void* space, u32 runAddress, u32 size)
         *(u32*)sRegion2Mcr[i] = 0xE1A00000; // mov r0, r0
     LOG_DEBUG("Shadow: region 2 %s\n", guards ? "off (it guarded the space)" : "left (not over the space)");
     LOG_DEBUG("Shadow at 0x%x: %u stubs of %u (%u out of reach)\n", runAddress, made, sEntryCount, failed);
-    LOG_DEBUG("Shadow: %u overlays, %u sites in %u slots, %u static from overlays (%u scanned, %u not unpacked, uncompress 0x%x)\n",
-        groupsMade, overlaySites, l.slots, sStaticFromOverlays, sOverlaysScanned, sOverlaysPacked, (u32)sUncompress);
+    LOG_DEBUG("Shadow: %u overlays, %u sites in %u slots, %u static from overlays (%u scanned, %u lz40, %u not unpacked, uncompress 0x%x)\n",
+        groupsMade, overlaySites, l.slots, sStaticFromOverlays, sOverlaysScanned, sOverlaysLz40, sOverlaysPacked, (u32)sUncompress);
     return made != 0;
 }

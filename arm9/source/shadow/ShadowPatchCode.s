@@ -279,21 +279,21 @@ copied:
 .global shadow_overlay_loaded
 .type shadow_overlay_loaded, %function
 shadow_overlay_loaded:
-    push {r4, r5, lr}
-    ldr r1, [r0] // the overlay's id
+    push {r4-r6, lr}
+    ldr r6, [r0] // the overlay's id: each of its groups (a big one has a few)
     ldr r4, shadow_groups
     ldr r5, shadow_group_count
 1:
     subs r5, r5, #1
     blt 9f
     ldr r2, [r4]
-    cmp r2, r1
-    addne r4, r4, #32
-    bne 1b
-    mov r0, r4
-    bl apply_group
+    cmp r2, r6
+    moveq r0, r4
+    bleq apply_group
+    add r4, r4, #32
+    b 1b
 9:
-    pop {r4, r5, pc}
+    pop {r4-r6, pc}
 
 // From the exit combo's vblank hook, where no FS_StartOverlay hook went in:
 // keeps r4-r11. An overlay goes in once every site reads as found: one half

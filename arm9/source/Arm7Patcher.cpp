@@ -207,12 +207,10 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
 #ifdef RTS_CENSUS
         if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
 #else
-        // Not for twl sdk games: their register writes mostly miss the scan
-        // (dma fills from itcm, overlays), so the shadow held stale values a load
-        // wrote back (golden sun dark dawn). They get basic states.
+        // twl sdk games too: the exit combo only goes in where they run in ds mode
         u32 shadow7Size = 0, shadow7Run = 0, shadow7Pool = 0;
         void* shadow7Space = nullptr;
-        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && !ShadowInstall::BasicMode())
+        if (exitComboArm7Patch != nullptr && !ShadowInstall::BasicMode())
         {
             ShadowInstall7::Collect(romHeader);
             shadow7Size = (ShadowInstall7::SpaceNeeded() + 31) & ~31u;
@@ -232,7 +230,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             else
                 shadow7Pool = shadow7Size;
         }
-        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && ShadowInstall::SpaceNeeded() + shadow7Pool != 0)
+        if (exitComboArm7Patch != nullptr && ShadowInstall::SpaceNeeded() + shadow7Pool != 0)
         {
             // the trap-free shadow, from the same place; the arm9 reaches it once
             // its install switches off the sdk's region 2
