@@ -52,17 +52,34 @@ bool Scanner::InLoop(u32 site, bool thumb) const
         {
             u32 pc = site + 2 * i;
             if (!Read16(pc, op)) return false;
+            // a short forward branch skips within the loop's body (some sdk
+            // builds' MI_CpuCopy16: blt / b over each step); on past it
             if ((op & 0xF000) == 0xD000 && (op & 0x0F00) < 0x0E00)
-                return pc + 4 + ((int32_t)(op << 24) >> 23) <= site;
+            {
+                u32 to = pc + 4 + ((int32_t)(op << 24) >> 23);
+                if (to <= site) return true;
+                if (to - pc > 16) return false;
+                continue;
+            }
             if ((op & 0xF800) == 0xE000)
-                return pc + 4 + ((int32_t)(op << 21) >> 20) <= site;
+            {
+                u32 to = pc + 4 + ((int32_t)(op << 21) >> 20);
+                if (to <= site) return true;
+                if (to - pc > 16) return false;
+                continue;
+            }
         }
         else
         {
             u32 pc = site + 4 * i;
             if (!Read32(pc, op)) return false;
             if ((op & 0x0F000000) == 0x0A000000 && (op >> 28) != 0xF)
-                return pc + 8 + ((u32)((int32_t)(op << 8) >> 6)) <= site;
+            {
+                u32 to = pc + 8 + ((u32)((int32_t)(op << 8) >> 6));
+                if (to <= site) return true;
+                if (to - pc > 16) return false;
+                continue;
+            }
         }
     }
     return false;
