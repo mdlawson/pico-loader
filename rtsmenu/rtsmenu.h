@@ -52,7 +52,13 @@ typedef struct
     u32 logSectorCount;
     u32 testResult;     // the load check's counts: memory parts | registers << 16
     u32 censusStart;    // the census space, 0 when there is none
+    u32 options;        // RTS_OPTION_*
+    u32 configSector;   // the game's mode file, one sector; 0 when missing
 } rts_info_t;
+
+#define RTS_CONFIG_SIZE 512
+#define RTS_OPTION_BASIC        1 // this boot is basic: no register shadow
+#define RTS_OPTION_NEXT_BASIC   2 // what the mode file says now
 
 #define TEST_REFERENCE  1 // the freeze writes slot 2
 #define TEST_COMPARE    2 // the freeze writes slot 3 and compares it with slot 2

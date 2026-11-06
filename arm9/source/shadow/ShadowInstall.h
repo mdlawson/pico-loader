@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "sharedMemory.h"
 
 class IAutoloadAdjuster;
 
@@ -9,6 +10,15 @@ class IAutoloadAdjuster;
 ///        to write back.
 namespace ShadowInstall
 {
+    /// @brief Whether this game's rts mode file asks for basic states: memory
+    ///        and the registers that read back only, no shadow (no game code
+    ///        patched for it, on either cpu).
+    inline bool BasicMode()
+    {
+        auto& rts = TWL_SHARED_MEMORY->exitRequest.rts;
+        return rts.magic == RTS_INFO_MAGIC && (rts.options & RTS_OPTION_BASIC);
+    }
+
     /// @brief Scans the decompressed arm9 (its autoloads still at their initial
     ///        place) for the stores and for the sdk's region 2 setup. Patches nothing.
     void Collect(u32 arm9Start, u32 arm9Size, const IAutoloadAdjuster* autoload);

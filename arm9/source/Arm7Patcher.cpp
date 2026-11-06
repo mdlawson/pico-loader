@@ -209,7 +209,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
 #else
         u32 shadow7Size = 0, shadow7Run = 0, shadow7Pool = 0;
         void* shadow7Space = nullptr;
-        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk())
+        if (exitComboArm7Patch != nullptr && !sdkVersion.IsTwlSdk() && !ShadowInstall::BasicMode())
         {
             ShadowInstall7::Collect(romHeader);
             shadow7Size = (ShadowInstall7::SpaceNeeded() + 31) & ~31u;

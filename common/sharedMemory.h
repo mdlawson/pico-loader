@@ -138,6 +138,13 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 // Save states: one contiguous file per game and slot, made by the loader at boot.
 #define RTS_STATE_DIRECTORY         "/_pico/states"
 #define RTS_STATE_SIZE              0x500000 // layout in rtsmenu/state.h
+// Per game: RTS_STATE_DIRECTORY/<game code>.cfg, one sector of text. "mode=basic"
+// boots the game with only the menu's hook: no register shadow, so no stores in
+// the game's code are patched and nothing is taken from its arm7 arena. States
+// then hold memory and the registers that read back, as a dstwo's do.
+#define RTS_CONFIG_SIZE             512
+#define RTS_OPTION_BASIC            1   // this boot is basic
+#define RTS_OPTION_NEXT_BASIC       2   // the menu's: what the file says now
 #define RTS_LOG_PATH                "/_pico/rtslog.txt" // the restore test's report, text
 #define RTS_LOG_SIZE                0x5000 // five 4 KB sections, the fifth the census
 
@@ -178,9 +185,11 @@ struct rts_info_t
     u32 logSectorCount;
     u32 testResult;     // the menu's own: the load check's counts
     u32 censusStart;    // the census space, 0 when there is none
+    u32 options;        // RTS_OPTION_*: from the game's mode file at boot; the menu's bits above
+    u32 configSector;   // the game's mode file (RTS_CONFIG_SIZE), 0 when missing
 };
 
-static_assert(sizeof(rts_info_t) == 0x58);
+static_assert(sizeof(rts_info_t) == 0x60);
 // the arm7 stub stores the menu's exit answer as the exit request as it is
 static_assert(RTS_MENU_STATE_EXIT == EXIT_REQUEST_REQUEST_MAGIC);
 
@@ -212,7 +221,7 @@ struct exit_request_block_t
     rts_info_t rts;
 };
 
-static_assert(sizeof(exit_request_block_t) == 0x168);
+static_assert(sizeof(exit_request_block_t) == 0x170);
 static_assert(offsetof(exit_request_block_t, rts.testFrames) == 0x148);
 static_assert(offsetof(exit_request_block_t, rts.cmdSector) == 0x134);
 static_assert(offsetof(exit_request_block_t, rts.cmdSectorCount) == 0x13C);

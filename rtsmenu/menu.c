@@ -5,6 +5,7 @@
 
 #include "rtsmenu.h"
 #include "census.h"
+u32 command(u32 cmd, u32 sector, u32 address, u32 sectorCount); // state.c
 
 #define REG_DISPCNT_A       (*(vu32*)0x04000000)
 #define REG_DISPCNT_B       (*(vu32*)0x04001000)
@@ -162,7 +163,7 @@ static void drawText(int x, int y, const char* text, u16 ink, u16 paper)
 #define COLOR_BAD       RGB(30, 12, 10)
 #define COLOR_BAR       RGB(10, 18, 30)
 
-enum { ITEM_RESUME, ITEM_SAVE, ITEM_LOAD, ITEM_TEST_SAVE, ITEM_TEST_LOAD, ITEM_CENSUS, ITEM_EXIT };
+enum { ITEM_RESUME, ITEM_SAVE, ITEM_LOAD, ITEM_TEST_SAVE, ITEM_TEST_LOAD, ITEM_MODE, ITEM_CENSUS, ITEM_EXIT };
 
 static const char* const sLabels[] =
 {
@@ -171,17 +172,19 @@ static const char* const sLabels[] =
     [ITEM_LOAD] = "Load state (slot 1)",
     [ITEM_TEST_SAVE] = "Test: save + reference",
     [ITEM_TEST_LOAD] = "Test: load + compare",
+    [ITEM_MODE] = "Mode: full",
     [ITEM_CENSUS] = "Census: traps on",
     [ITEM_EXIT] = "Exit to launcher",
 };
 
-#define MAX_ITEMS   7
+#define MAX_ITEMS   8
 static int sItems[MAX_ITEMS];
 static int sItemCount;
 
 #define ITEMS_Y     43
-#define ITEM_STEP   15
+#define ITEM_STEP   sItemStep // 15, or 13 for 8 items, to end above the status
 #define STATUS_Y    148
+static int sItemStep = 15;
 
 static void drawGameLine(const u8* header)
 {
@@ -198,6 +201,54 @@ static void drawGameLine(const u8* header)
     drawText(8, 25, line, COLOR_DIM, COLOR_BG);
 }
 
+// The game's rts mode (the loader's <code>.cfg): what this boot runs, and
+// what the file says for the next one, which the menu rewrites in place.
+static volatile rts_info_t* sMenuRts;
+
+static const char* modeLabel(void)
+{
+    u32 o = sMenuRts->options;
+    int now = (o & RTS_OPTION_BASIC) != 0, next = (o & RTS_OPTION_NEXT_BASIC) != 0;
+    if (now == next)
+        return now ? "Mode: basic" : "Mode: full";
+    return next ? "Mode: basic (next boot)" : "Mode: full (next boot)";
+}
+
+// Rewrites the mode in the file's one sector, keeping the rest of it: the
+// loader leaves the value 5 wide ("full " or "basic").
+static int writeMode(int basic)
+{
+    char* text = (char*)__scratch;
+    u32 sector = sMenuRts->configSector;
+    if (command(RTS_MENU_STATE_SDREAD, sector, (u32)text, 1) != RTS_MENU_STATE_DONE)
+        return 0;
+    int at = -1;
+    for (int i = 0, lineStart = 1; i < RTS_CONFIG_SIZE - 10 && at < 0; i++)
+    {
+        char c = text[i];
+        if (c == '\n')
+            lineStart = 1;
+        else if (lineStart && c == 'm' && text[i + 1] == 'o' && text[i + 2] == 'd'
+            && text[i + 3] == 'e' && text[i + 4] == '=')
+            at = i + 5;
+        else if (c != ' ' && c != '\t' && c != '\r')
+            lineStart = 0;
+    }
+    if (at < 0)
+    {
+        // no mode line: a fresh file of just that
+        for (int i = 0; i < RTS_CONFIG_SIZE; i++)
+            text[i] = ' ';
+        text[0] = 'm'; text[1] = 'o'; text[2] = 'd'; text[3] = 'e'; text[4] = '=';
+        text[10] = '\r'; text[11] = '\n';
+        at = 5;
+    }
+    const char* v = basic ? "basic" : "full ";
+    for (int i = 0; i < 5; i++)
+        text[at + i] = v[i];
+    return command(RTS_MENU_STATE_SDWRITE, sector, (u32)text, 1) == RTS_MENU_STATE_DONE;
+}
+
 static void drawItems(int selected)
 {
     for (int i = 0; i < sItemCount; i++)
@@ -207,6 +258,8 @@ static void drawItems(int selected)
         u16 ink = i == selected ? COLOR_SELECT : COLOR_TEXT;
         fillRect(8, y - 1, SCREEN_W - 16, ITEM_STEP, paper);
         const char* label = sLabels[sItems[i]];
+        if (sItems[i] == ITEM_MODE)
+            label = modeLabel();
         if (sItems[i] == ITEM_CENSUS)
             label = !censusPresent() ? "Census: not in this boot"
                 : !censusWanted() ? "Census: traps off"
@@ -406,6 +459,7 @@ u32 rtsMain(void* block)
     drawGameLine((const u8*)block + HEADER_FROM_BLOCK);
     drawText(8, SCREEN_H - 16, "A: choose  B: back to the game", COLOR_DIM, COLOR_BG);
 
+    sMenuRts = rts;
     sItemCount = 0;
     sItems[sItemCount++] = ITEM_RESUME;
     if (rts->stateSector != 0)
@@ -417,10 +471,13 @@ u32 rtsMain(void* block)
             sItems[sItemCount++] = ITEM_TEST_SAVE;
             sItems[sItemCount++] = ITEM_TEST_LOAD;
         }
-        if (rts->logSector)
+        if (rts->configSector)
+            sItems[sItemCount++] = ITEM_MODE;
+        if (rts->logSector && censusPresent())
             sItems[sItemCount++] = ITEM_CENSUS;
     }
     sItems[sItemCount++] = ITEM_EXIT;
+    sItemStep = sItemCount > 7 ? 13 : 15;
     if (rts->stateSector == 0)
         drawStatus("No state file: see rtsstatus.txt", COLOR_DIM);
 
@@ -466,6 +523,21 @@ u32 rtsMain(void* block)
                 case ITEM_RESUME: answer = RTS_MENU_STATE_RESUME; break;
                 case ITEM_EXIT: answer = RTS_MENU_STATE_EXIT; break;
                 case ITEM_SAVE: waitRelease(); saveState(block); break;
+                case ITEM_MODE:
+                {
+                    waitRelease();
+                    int basic = !(rts->options & RTS_OPTION_NEXT_BASIC);
+                    if (!writeMode(basic))
+                        drawStatus("Mode file not written", COLOR_BAD);
+                    else
+                    {
+                        rts->options = basic ? rts->options | RTS_OPTION_NEXT_BASIC
+                            : rts->options & ~RTS_OPTION_NEXT_BASIC;
+                        drawStatus(basic ? "Basic from the next boot" : "Full from the next boot", COLOR_GOOD);
+                    }
+                    drawStatus2(0, 0);
+                    break;
+                }
                 case ITEM_CENSUS:
                 {
                     waitRelease();
@@ -508,7 +580,7 @@ u32 rtsMain(void* block)
                         sItemCount = 0;
                         sItems[sItemCount++] = ITEM_EXIT;
                         selected = 0;
-                        fillRect(0, ITEMS_Y - 1, SCREEN_W, MAX_ITEMS * ITEM_STEP, COLOR_BG);
+                        fillRect(0, ITEMS_Y - 1, SCREEN_W, STATUS_Y - ITEMS_Y, COLOR_BG);
                     }
                     break;
                 }

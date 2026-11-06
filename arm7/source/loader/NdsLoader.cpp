@@ -1250,6 +1250,90 @@ static u32 makeContiguousFile(const char* path, u32 size, u8 fill)
     return sector;
 }
 
+// The per-game mode file, <code>.cfg: 512 bytes of text, "mode=full" or
+// "mode=basic" (the first mode= line that is not a # comment counts). A missing
+// or resized file (edited on a pc) is rewritten at 512 bytes, keeping its mode,
+// so that the menu can rewrite it in place by sector. Returns that sector or 0;
+// basic says what the file asks for.
+static void writeRtsConfigText(char* text, bool basic)
+{
+    memset(text, ' ', RTS_CONFIG_SIZE);
+    const char* body = basic ? "mode=basic\r\n" : "mode=full \r\n"; // 5 wide, for the menu
+    const char* help =
+        "# Pico Loader RTS, this game. full: states also keep the display registers\r\n"
+        "# the DS can't read back, by patching the game's stores to them. basic: only\r\n"
+        "# memory and the registers that read back, no game code patched (as a\r\n"
+        "# dstwo). Change it here or in the menu (L+R+Up+Select); it applies from\r\n"
+        "# the next boot of the game.\r\n";
+    u32 n = strlen(body);
+    memcpy(text, body, n);
+    memcpy(text + n, help, strlen(help));
+    text[RTS_CONFIG_SIZE - 2] = '\r';
+    text[RTS_CONFIG_SIZE - 1] = '\n';
+}
+
+static u32 readRtsConfig(const char* path, bool& basic)
+{
+    basic = false;
+    auto file = std::make_unique<FIL>();
+    if (f_open(file.get(), path, FA_OPEN_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
+    {
+        return 0;
+    }
+    char* text = new char[RTS_CONFIG_SIZE + 1];
+    UINT bytesRead = 0;
+    if (f_read(file.get(), text, RTS_CONFIG_SIZE, &bytesRead) != FR_OK)
+    {
+        bytesRead = 0;
+    }
+    text[bytesRead] = 0;
+    // parse: line by line, skip comments, first mode= wins
+    for (char* line = text; *line; )
+    {
+        while (*line == ' ' || *line == '\t' || *line == '\r' || *line == '\n')
+        {
+            line++;
+        }
+        if (strncmp(line, "mode", 4) == 0)
+        {
+            char* v = line + 4;
+            while (*v == ' ' || *v == '\t') v++;
+            if (*v == '=')
+            {
+                v++;
+                while (*v == ' ' || *v == '\t') v++;
+                basic = (v[0] | 0x20) == 'b';
+                break;
+            }
+        }
+        while (*line && *line != '\n')
+        {
+            line++;
+        }
+    }
+    u32 sector = 0;
+    if (f_size(file.get()) == RTS_CONFIG_SIZE)
+    {
+        sector = getContiguousFileSector(file.get());
+    }
+    if (sector == 0)
+    {
+        writeRtsConfigText(text, basic);
+        UINT bytesWritten = 0;
+        if (f_lseek(file.get(), 0) == FR_OK &&
+            f_truncate(file.get()) == FR_OK &&
+            f_write(file.get(), text, RTS_CONFIG_SIZE, &bytesWritten) == FR_OK &&
+            bytesWritten == RTS_CONFIG_SIZE &&
+            f_sync(file.get()) == FR_OK)
+        {
+            sector = getContiguousFileSector(file.get());
+        }
+    }
+    delete[] text;
+    f_close(file.get());
+    return sector;
+}
+
 void NdsLoader::SetupRtsStateFile()
 {
     auto& rts = TWL_SHARED_MEMORY->exitRequest.rts;
@@ -1288,9 +1372,13 @@ void NdsLoader::SetupRtsStateFile()
         rts.testSlotSector[1] = sectors[2];
         rts.logSector = makeContiguousFile(RTS_LOG_PATH, RTS_LOG_SIZE, ' ');
         rts.logSectorCount = rts.logSector ? RTS_LOG_SIZE / 512 : 0;
+        bool basic = false;
+        mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s.cfg", code);
+        rts.configSector = readRtsConfig(path, basic);
+        rts.options = basic ? (RTS_OPTION_BASIC | RTS_OPTION_NEXT_BASIC) : 0;
         mini_snprintf(status, sizeof(status),
-            "save state: %s slot 1 at sector %u, test slots 2 and 3 at %u and %u, log at %u%s\r\n",
-            code, sectors[0], sectors[1], sectors[2], rts.logSector,
+            "save state: %s mode %s, slot 1 at sector %u, test slots 2 and 3 at %u and %u, log at %u%s\r\n",
+            code, basic ? "basic" : "full", sectors[0], sectors[1], sectors[2], rts.logSector,
             sectors[0] ? "." : " (slot 1 missing: no free run of 5 MB?).");
     }
     LOG_DEBUG("Rts: %s", status);

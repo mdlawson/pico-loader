@@ -9,6 +9,9 @@ rtsmenu9.elf: start.o menu.o state.o check.o census.o rtsmenu.ld
 	$(PREFIX)gcc $(CFLAGS) -T rtsmenu.ld -Wl,-Map,rtsmenu9.map start.o menu.o state.o check.o census.o -lgcc -o $@
 start.o: start.s font.bin
 	$(PREFIX)as -mcpu=arm946e-s $< -o $@
+# the menu's screen and keys: thumb, for room (no cp15 or timing in it)
+menu.o: menu.c rtsmenu.h state.h stateint.h census.h
+	$(PREFIX)gcc $(CFLAGS) -mthumb -mthumb-interwork -c $< -o $@
 %.o: %.c rtsmenu.h state.h stateint.h census.h
 	$(PREFIX)gcc $(CFLAGS) -c $< -o $@
 clean:

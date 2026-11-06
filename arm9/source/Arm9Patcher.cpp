@@ -270,7 +270,7 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
         patchCollection.AddPatch(new CardiReadRomIdCorePatch());
         osResetSystemPatch = new OSResetSystemPatch(loaderInfo, runInDSiMode);
         patchCollection.AddPatch(osResetSystemPatch);
-        AddGamePatches(patchCollection, romHeader->gameCode, apListEntry, exitComboEnabled && !sdkVersion.IsTwlSdk());
+        AddGamePatches(patchCollection, romHeader->gameCode, apListEntry, exitComboEnabled && !sdkVersion.IsTwlSdk() && !ShadowInstall::BasicMode());
 
         // Added last on purpose: this is an optional feature that must never
         // take patch heap a mandatory patch needs. Because ApplyPatch runs in
@@ -298,7 +298,8 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
 
 #ifndef RTS_CENSUS
     // the display register shadow for the rts, put in once the arm7's arena is known
-    if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !sdkVersion.IsTwlSdk())
+    if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !sdkVersion.IsTwlSdk()
+        && !ShadowInstall::BasicMode())
         ShadowInstall::Collect(romHeader->arm9LoadAddress, arm9Size, patchContext.GetAutoloadAdjuster());
     else
         ShadowInstall::Collect(0, 0, nullptr);
@@ -323,7 +324,8 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
     // What the patch heap has left goes to the shadow's overlay slots, should its
     // space in the arm7's arena be short: zeros only (the tail of a clone boot
     // rom's .parent section), never filler a romhack might keep code in.
-    if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !sdkVersion.IsTwlSdk())
+    if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !sdkVersion.IsTwlSdk()
+        && !ShadowInstall::BasicMode())
     {
         u32 extraSize = patchContext.GetPatchHeap().LargestFree() & ~15u;
         if (extraSize >= 0x100)
