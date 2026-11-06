@@ -6,6 +6,7 @@
 #include "rtsmenu.h"
 #include "census.h"
 u32 command(u32 cmd, u32 sector, u32 address, u32 sectorCount); // state.c
+int shadowIntact(void); // state.c
 
 #define REG_DISPCNT_A       (*(vu32*)0x04000000)
 #define REG_DISPCNT_B       (*(vu32*)0x04001000)
@@ -480,6 +481,8 @@ u32 rtsMain(void* block)
     sItemStep = sItemCount > 7 ? 13 : 15;
     if (rts->stateSector == 0)
         drawStatus("No state file: see rtsstatus.txt", COLOR_DIM);
+    else if (shadowIntact() == 0)
+        drawStatus("Shadow memory taken: basic loads", COLOR_BAD);
 
     int selected = 0;
     drawItems(selected);

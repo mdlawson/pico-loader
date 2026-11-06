@@ -871,6 +871,27 @@ static u32 sDma[4][3];
 #define SH_DATA         8
 #define SH_FLAGS        0x128
 
+// Whether the trap-free shadow's space is still the shadow's: its header in
+// place, and the sdk's arenas (their table at the top of main memory) still
+// around it: the arm7's main arena from above it, the arm9's below it. A game
+// that moved either over it gets basic loads (no registers written back from
+// it). 1: intact, 0: taken, -1: no such shadow.
+int shadowIntact(void)
+{
+    u32 start = sRts->censusStart;
+    if (start < 0x02000000 || start >= 0x02400000 || (start & 3)
+        || *(volatile u32*)start != 0x32444853 /* 'SHD2' */)
+        return -1;
+    volatile u32* arena = (volatile u32*)0x023FFDA0; // lo[9], hi[9]
+    u32 at = start & 0x3FFFFF;
+    u32 lo7 = arena[1], hi9 = arena[9];
+    if (lo7 >= 0x02000000 && lo7 < 0x02800000 && (lo7 & 0x3FFFFF) <= at)
+        return 0;
+    if (hi9 >= 0x02000000 && hi9 < 0x02800000 && (hi9 & 0x3FFFFF) > at)
+        return 0;
+    return 1;
+}
+
 static void shadowLeave(void)
 {
     u32 start = sRts->censusStart;
@@ -879,6 +900,8 @@ static void shadowLeave(void)
     volatile u32* live = (volatile u32*)start;
     if (live[0] == 0x32444853 /* 'SHD2' */)
     {
+        if (shadowIntact() != 1)
+            return;
         // the trap-free shadow (shadow/ShadowPatchCode.s): came with the state,
         // stubs, code and all
         const u8* data = (const u8*)start + 0x10;
