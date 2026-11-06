@@ -145,6 +145,8 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 #define RTS_CONFIG_SIZE             512
 #define RTS_OPTION_BASIC            1   // this boot is basic
 #define RTS_OPTION_NEXT_BASIC       2   // the menu's: what the file says now
+#define RTS_OPTION_TWL              4   // the game runs in dsi mode: 16 MB of main memory, the new wram
+#define RTS_STATE_SIZE_TWL          0x11C0000 // a dsi mode game's (rtsmenu/state.h STATE_TWL_END)
 #define RTS_LOG_PATH                "/_pico/rtslog.txt" // the restore test's report, text
 #define RTS_LOG_SIZE                0x5000 // five 4 KB sections, the fifth the census
 

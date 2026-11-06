@@ -28,6 +28,9 @@ public:
 private:
     // 32-bit fields only: patches live in vram, where byte writes are lost on DS and DS Lite.
     u32* _dispatchTail = nullptr;
+    u32 _irqTable = 0;
+    u32 _irqReturn = 0;
+    u32 _twlRegs = 0; // the twl handler's: where its tail keeps the thread's registers
     u32* _prioDispatch = nullptr;
     u32 _prioReturnOffset = 0;
     u32 _searched = 0;

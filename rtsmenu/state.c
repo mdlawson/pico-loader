@@ -9,6 +9,11 @@
 
 static u32 sIoDump[STATE_ARM9_IO_SIZE / 4];
 
+u32 gMainSize = 0x400000;
+static u32 sStateEnd = STATE_END;
+static u32 sZeroMapAt = STATE_ZERO_MAP, sZeroMapSize = STATE_ZERO_MAP_SIZE;
+static twl_info_t sTwl; // dsi mode: the new wram's mapping as the menu found it
+
 // The readable arm9 registers, as offsets from 0x04000000 (end exclusive). Left
 // out: the display fifo at 0x068 and the geometry command ports.
 static const u16 sIoRanges[][2] =
@@ -322,12 +327,29 @@ u32 command(u32 cmd, u32 sector, u32 address, u32 sectorCount)
 // The zero map of the slot sZeroSlot (0: none read): a bit per 2 KB block of
 // its file, set when the block was all zero and the save skipped it. Writes are
 // one sector per card command, so this is most of what makes saving quicker.
-static u32 sZero[STATE_ZERO_MAP_SIZE / 4];
+static u32 sZero[STATE_TWL_ZERO_MAP_SIZE / 4];
 static int sZeroSlot;
 static int sZeroValid;
 
+// The main ram the dtcm covers for the arm9 (the twl sdk puts it at 0x02FE0000,
+// inside 16 MB): the arm9 reads the dtcm there, so only the arm7 sees the ram.
+// 0 when it covers none.
+u32 dtcmOverMain(u32* end)
+{
+    u32 reg = cp15Read(1);
+    u32 start = reg & ~0xFFF, size = 512u << ((reg >> 1) & 0x1F);
+    *end = start + size;
+    if (!(cp15Read(0) & (1 << 16)) || start >= 0x02000000 + gMainSize || *end <= 0x02000000)
+        return 0;
+    return start;
+}
+
 static int zeroBlock(const volatile u32* p)
 {
+    u32 dtcmEnd, dtcm = dtcmOverMain(&dtcmEnd);
+    if (dtcm && (u32)p < dtcmEnd && (u32)p + STATE_ZERO_BLOCK > dtcm)
+        return 0; // the arm9 sees the dtcm here: the arm7 writes the ram
+
     u32 any = 0;
     for (u32 i = 0; i < STATE_ZERO_BLOCK / 4; i += 4)
         any |= p[i] | p[i + 1] | p[i + 2] | p[i + 3];
@@ -339,7 +361,7 @@ static int zeroBlock(const volatile u32* p)
 // memory the arm9 can read are left out and marked instead.
 static int writeState(u32 offset, u32 address, u32 size)
 {
-    if ((offset | size) & 511 || offset + size > STATE_END || offset + size < offset || !sSlotSector)
+    if ((offset | size) & 511 || offset + size > sStateEnd || offset + size < offset || !sSlotSector)
         return 0;
     if (!sZeroValid || offset + size <= STATE_VRAM)
     {
@@ -349,7 +371,7 @@ static int writeState(u32 offset, u32 address, u32 size)
     // whole blocks only here (all the saves are), so no block is half written
     if ((offset | size) & (STATE_ZERO_BLOCK - 1) || offset < STATE_VRAM)
         return 0;
-    int arm9 = address >= 0x02000000 && address < 0x02400000;
+    int arm9 = address >= 0x02000000 && address < 0x02000000 + gMainSize;
     const u32 per = STATE_ZERO_BLOCK / 512;
     u32 first = offset / STATE_ZERO_BLOCK, count = size / STATE_ZERO_BLOCK, run = 0;
     for (u32 b = 0; b <= count; b++)
@@ -453,31 +475,6 @@ static int writeSharedWram(void)
     return 1;
 }
 
-u32 cp15Read(int which)
-{
-    u32 v = 0;
-    switch (which)
-    {
-        case 0: asm volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(v)); break;
-        case 1: asm volatile("mrc p15, 0, %0, c9, c1, 0" : "=r"(v)); break;
-        case 2: asm volatile("mrc p15, 0, %0, c9, c1, 1" : "=r"(v)); break;
-        case 3: asm volatile("mrc p15, 0, %0, c2, c0, 0" : "=r"(v)); break;
-        case 4: asm volatile("mrc p15, 0, %0, c2, c0, 1" : "=r"(v)); break;
-        case 5: asm volatile("mrc p15, 0, %0, c3, c0, 0" : "=r"(v)); break;
-        case 6: asm volatile("mrc p15, 0, %0, c5, c0, 2" : "=r"(v)); break;
-        case 7: asm volatile("mrc p15, 0, %0, c5, c0, 3" : "=r"(v)); break;
-        case 8: asm volatile("mrc p15, 0, %0, c6, c0, 0" : "=r"(v)); break;
-        case 9: asm volatile("mrc p15, 0, %0, c6, c1, 0" : "=r"(v)); break;
-        case 10: asm volatile("mrc p15, 0, %0, c6, c2, 0" : "=r"(v)); break;
-        case 11: asm volatile("mrc p15, 0, %0, c6, c3, 0" : "=r"(v)); break;
-        case 12: asm volatile("mrc p15, 0, %0, c6, c4, 0" : "=r"(v)); break;
-        case 13: asm volatile("mrc p15, 0, %0, c6, c5, 0" : "=r"(v)); break;
-        case 14: asm volatile("mrc p15, 0, %0, c6, c6, 0" : "=r"(v)); break;
-        case 15: asm volatile("mrc p15, 0, %0, c6, c7, 0" : "=r"(v)); break;
-    }
-    return v;
-}
-
 // ---------------------------------------------------------------- ipc fifos
 
 #define REG_IPCFIFOCNT  (*(vu16*)0x04000184)
@@ -491,9 +488,53 @@ static u32 sFifo9[17];
 static u32 sFifo7[17];
 static int sLoaded;
 
+// The new wram's mapping: MBK1-5 and the arm9's windows here, the arm7's
+// through it.
+static void twlTakeInfo(void)
+{
+    memset(&sTwl, 0, sizeof(sTwl));
+    sTwl.magic = TWL_INFO_MAGIC;
+    for (int i = 0; i < 20; i++)
+        sTwl.mbk[i] = *(vu8*)(0x04004040 + i);
+    for (int i = 0; i < 3; i++)
+        sTwl.window9[i] = *(vu32*)(0x04004054 + i * 4);
+    command(RTS_MENU_STATE_ARM7_COPY, 0x04004054, (u32)sTwl.window7, 12);
+    sTwl.scfgExt9 = *(vu32*)0x04004008;
+}
+
+// A slot: A 0-3 (64 KB), B 0-7 and C 0-7 (32 KB). Its cpu sees it at the start
+// of that cpu's window for its bank, plus its offset, when the window reaches.
+u32 twlSlot(int slot, int* arm7, u32* offset, u32* size)
+{
+    u32 bank = slot < 4 ? 0 : slot < 12 ? 1 : 2;
+    u32 unit = bank == 0 ? 0x10000 : 0x8000;
+    *size = unit;
+    *offset = STATE_TWL_WRAM + (bank == 0 ? slot * unit : 0x40000 + (slot - 4) * unit);
+    u8 m = sTwl.mbk[slot];
+    u32 master = bank == 0 ? m & 1 : m & 3;
+    if (!(m & 0x80) || master > 1) // off, or the dsp's
+        return 0;
+    u32 place = bank == 0 ? (m >> 2) & 3 : (m >> 2) & 7;
+    u32 w = master ? sTwl.window7[bank] : sTwl.window9[bank];
+    u32 start = bank == 0 ? (w >> 4) & 0xFF : (w >> 3) & 0x1FF;
+    u32 end = bank == 0 ? (w >> 20) & 0x1FF : (w >> 19) & 0x1FF;
+    if (start + place >= end)
+        return 0;
+    *arm7 = master;
+    return 0x03000000 + (start + place) * unit;
+}
+
 void stateEnter(void* block)
 {
     sRts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
+    if (sRts->options & RTS_OPTION_TWL)
+    {
+        gMainSize = STATE_TWL_MAIN_SIZE;
+        sStateEnd = STATE_TWL_END;
+        sZeroMapAt = STATE_TWL_ZERO_MAP;
+        sZeroMapSize = STATE_TWL_ZERO_MAP_SIZE;
+        twlTakeInfo();
+    }
     u16 cnt = REG_IPCFIFOCNT;
     REG_IPCFIFOCNT = cnt | 0x8000; // enabled to read
     u32 n = 0;
@@ -567,6 +608,7 @@ static void buildHeader(state_header_t* h, void* block)
     memcpy(h->timer9, sTimer, sizeof(sTimer));
     memcpy(h->timerReload9, sTimerReload, sizeof(sTimerReload));
     h->timerMeasured9 = sTimerMeasured;
+    h->mainSize = TWL_MODE ? gMainSize : 0;
 }
 
 // ---------------------------------------------------------------- save
@@ -585,8 +627,8 @@ static const char* save(void* block, int slot, void (*progress)(u32 done, u32 to
     sZeroValid = 1;
 
     // eleven single steps, main ram in MAIN_STEP parts around the stash in scratch parts
-    const u32 total = 11 + 0x100000 / MAIN_STEP + (0x400000 - 0x100000 - RTS_STASH_SIZE + MAIN_STEP - 1) / MAIN_STEP
-        + RTS_STASH_SIZE / SCRATCH_SIZE;
+    const u32 total = 11 + 0x100000 / MAIN_STEP + (gMainSize - 0x100000 - RTS_STASH_SIZE + MAIN_STEP - 1) / MAIN_STEP
+        + RTS_STASH_SIZE / SCRATCH_SIZE + (TWL_MODE ? TWL_SLOTS + 1 : 0);
     u32 done = 0;
 #define STEP(x) do { if (!(x)) { sZeroSlot = 0; sZeroValid = 0; return "write refused"; } progress(++done, total); } while (0)
 
@@ -631,7 +673,7 @@ static const char* save(void* block, int slot, void (*progress)(u32 done, u32 to
 
     // main ram: the part under the menu is in the stash file
     u32 stashStart = RTS_BASE - 0x02000000; // 0x100000, a multiple of MAIN_STEP
-    for (u32 offset = 0; offset < 0x400000; )
+    for (u32 offset = 0; offset < gMainSize; )
     {
         if (offset == stashStart)
         {
@@ -646,14 +688,35 @@ static const char* save(void* block, int slot, void (*progress)(u32 done, u32 to
         u32 step = MAIN_STEP;
         if (offset < stashStart && offset + step > stashStart)
             step = stashStart - offset;
-        if (offset + step > 0x400000)
-            step = 0x400000 - offset;
+        if (offset + step > gMainSize)
+            step = gMainSize - offset;
         STEP(writeState(STATE_MAIN_RAM + offset, 0x02000000 + offset, step));
         offset += step;
     }
 
+    // dsi mode: the new wram's slots, each through the cpu it is mapped to
+    if (TWL_MODE)
+    {
+        sTwl.saved = 0;
+        for (int s = 0; s < TWL_SLOTS; s++)
+        {
+            int arm7 = 0;
+            u32 offset, size, at = twlSlot(s, &arm7, &offset, &size);
+            if (at)
+            {
+                STEP(arm7 ? writeState(offset, at, size) : writeStateFromArm9(offset, (const volatile void*)at, size));
+                sTwl.saved |= 1u << s;
+            }
+            else
+                progress(++done, total);
+        }
+        memset(__scratch, 0, 512);
+        memcpy(__scratch, &sTwl, sizeof(sTwl));
+        STEP(writeState(STATE_TWL_INFO, (u32)__scratch, 512));
+    }
+
     command(RTS_MENU_STATE_FIFO_QUERY, 0, (u32)sFifo7, 0);
-    STEP(writeState(STATE_ZERO_MAP, (u32)sZero, STATE_ZERO_MAP_SIZE));
+    STEP(writeState(sZeroMapAt, (u32)sZero, sZeroMapSize));
     buildHeader((state_header_t*)__scratch, block);
     ((state_header_t*)__scratch)->zeroMap = 1;
     STEP(writeState(STATE_HEADER, (u32)__scratch, 512));
@@ -679,8 +742,8 @@ static int zeroMapFor(int slot, u32 sector)
         return 0;
     const state_header_t* h = (const state_header_t*)sZero;
     int mapped = h->magic == STATE_MAGIC && h->version >= 5 && h->zeroMap == 1;
-    if (mapped && command(RTS_MENU_STATE_SDREAD, sector + STATE_ZERO_MAP / 512, (u32)sZero,
-            STATE_ZERO_MAP_SIZE / 512) != RTS_MENU_STATE_DONE)
+    if (mapped && command(RTS_MENU_STATE_SDREAD, sector + sZeroMapAt / 512, (u32)sZero,
+            sZeroMapSize / 512) != RTS_MENU_STATE_DONE)
         return 0;
     sZeroSlot = slot;
     sZeroValid = mapped;
@@ -690,7 +753,7 @@ static int zeroMapFor(int slot, u32 sector)
 int readSlot(int slot, u32 offset, u32 address, u32 size)
 {
     u32 sector = slotSector(slot);
-    if ((offset | size) & 511 || offset + size > STATE_END || offset + size < offset || !sector)
+    if ((offset | size) & 511 || offset + size > sStateEnd || offset + size < offset || !sector)
         return 0;
     if (offset + size <= STATE_VRAM)
         return command(RTS_MENU_STATE_SDREAD, sector + offset / 512, address, size / 512)
@@ -699,7 +762,7 @@ int readSlot(int slot, u32 offset, u32 address, u32 size)
         return 0;
     // the skipped sectors are zero, filled here: memory the arm9 can reach
     // only (main memory, the scratch and vram copies are)
-    int arm9 = address >= 0x02000000 && address < 0x02400000;
+    int arm9 = address >= 0x02000000 && address < 0x02000000 + gMainSize;
     u32 first = offset / 512, count = size / 512, run = 0, filled = 0;
     for (u32 s = 0; s <= count; s++)
     {
@@ -774,6 +837,21 @@ const char* stateCheck(void* block)
         return "older format, save again";
     if (sHeader.gameCode != gameCode)
         return "from another game";
+    if ((sHeader.version >= 6 && sHeader.mainSize ? sHeader.mainSize : 0x400000) != gMainSize)
+        return TWL_MODE ? "saved in ds mode" : "saved in dsi mode";
+    if (TWL_MODE)
+    {
+        if (!readState(STATE_TWL_INFO, (u32)__scratch, 512))
+            return "could not read it";
+        const twl_info_t* t = (const twl_info_t*)__scratch;
+        int same = t->magic == TWL_INFO_MAGIC;
+        for (u32 i = 0; i < 20; i++)
+            same &= t->mbk[i] == sTwl.mbk[i];
+        for (u32 i = 0; i < 3; i++)
+            same &= t->window9[i] == sTwl.window9[i] && t->window7[i] == sTwl.window7[i];
+        if (!same)
+            return "new wram mapped otherwise";
+    }
     // the same patches in the same places, entered the same way
     if (sHeader.blockAddress != (u32)block || sHeader.waitEntry != gSavedRegs[0] ||
         sHeader.irqLr != gSavedRegs[10] || sHeader.irqSp != gSavedRegs[11])
@@ -817,7 +895,7 @@ static const u16 sIoRestore[][2] =
 // it only counts the steps. Returns 0 when a read failed.
 static int restoreMainRam(u32 keep[KEEP_RANGES][2], void (*progress)(u32 done, u32 total), u32* done, u32 total)
 {
-    for (u32 ram = 0; ram < 0x400000; )
+    for (u32 ram = 0; ram < gMainSize; )
     {
         u32 step = MAIN_STEP - (ram % MAIN_STEP);
         int around = -1;
@@ -842,8 +920,8 @@ static int restoreMainRam(u32 keep[KEEP_RANGES][2], void (*progress)(u32 done, u
             ram += 512;
             continue;
         }
-        if (ram + step > 0x400000)
-            step = 0x400000 - ram;
+        if (ram + step > gMainSize)
+            step = gMainSize - ram;
         MAIN_STEP_DO(readState(STATE_MAIN_RAM + ram, 0x02000000 + ram, step));
         ram += step;
     }
@@ -1003,12 +1081,12 @@ void mainRamKeep(void* block, u32 keep[KEEP_RANGES][2])
 {
     keep[0][0] = RTS_BASE - 0x02000000;
     keep[0][1] = RTS_BASE - 0x02000000 + RTS_STASH_SIZE;
-    keep[1][0] = (u32)block & 0x3FFFFF;
-    keep[1][1] = ((u32)block & 0x3FFFFF) + RTS_INFO_OFFSET + sizeof(rts_info_t);
+    keep[1][0] = ((u32)block - 0x02000000) & (gMainSize - 1);
+    keep[1][1] = keep[1][0] + RTS_INFO_OFFSET + sizeof(rts_info_t);
     keep[2][0] = keep[2][1] = 0;
     if (sRts->arm7PatchStart >= 0x02000000 && sRts->arm7PatchStart < 0x03000000)
     {
-        keep[2][0] = sRts->arm7PatchStart & 0x3FFFFF;
+        keep[2][0] = (sRts->arm7PatchStart - 0x02000000) & (gMainSize - 1);
         keep[2][1] = keep[2][0] + sRts->arm7PatchSize;
     }
     // the census counts on through a load, and its variables say what the
@@ -1131,7 +1209,7 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     restoreMainRam(keep, 0, &mainSteps, 0);
     // arm7 3, shared wram 2, tcms 2, palette and oam 2, vram 9, main ram,
     // stash 2 per part, io 1
-    const u32 total = 19 + mainSteps + 2 * (RTS_STASH_SIZE / SCRATCH_SIZE) + 1;
+    const u32 total = 19 + mainSteps + 2 * (RTS_STASH_SIZE / SCRATCH_SIZE) + 1 + (TWL_MODE ? TWL_SLOTS : 0);
     u32 done = 0;
     *broken = 1; // from here on the game's memory changes
 #define STEP(x) do { if (!(x)) return "read failed"; progress(++done, total); } while (0)
@@ -1198,6 +1276,16 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
 
     if (!restoreMainRam(keep, progress, &done, total))
         return "read failed";
+    // dsi mode: the new wram's slots, mapped as when saved (stateCheck)
+    for (int s = 0; TWL_MODE && s < TWL_SLOTS; s++)
+    {
+        int arm7 = 0;
+        u32 offset, size, at = twlSlot(s, &arm7, &offset, &size);
+        if (at)
+            STEP(arm7 ? readState(offset, at, size) : readStateToArm9(offset, (volatile void*)at, size));
+        else
+            progress(++done, total);
+    }
     for (u32 part = 0; part < RTS_STASH_SIZE; part += SCRATCH_SIZE)
     {
         STEP(readState(STATE_MAIN_RAM + keep[0][0] + part, (u32)__scratch, SCRATCH_SIZE));
@@ -1286,9 +1374,9 @@ const char* stateSave(void* block, int slot, void (*progress)(u32 done, u32 tota
 {
     u32 permissions = cp15Read(6);
     sGamePermissions = permissions; // the header keeps the game's, not the opened ones
-    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(0x11111111) : "memory");
+    cp15WritePermissions(0x11111111);
     const char* problem = save(block, slot, progress);
-    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(permissions) : "memory");
+    cp15WritePermissions(permissions);
     sGamePermissions = 0;
     return problem;
 }
@@ -1300,8 +1388,8 @@ const char* stateLoad(void* block, void (*progress)(u32 done, u32 total), int* b
     // block's sector is there. The menu runs privileged, so open every region
     // to privileged reads and writes while it loads, then put the game's back.
     u32 permissions = cp15Read(6);
-    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(0x11111111) : "memory");
+    cp15WritePermissions(0x11111111);
     const char* problem = load(block, progress, broken);
-    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(permissions) : "memory");
+    cp15WritePermissions(permissions);
     return problem;
 }

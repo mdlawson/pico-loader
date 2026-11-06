@@ -209,6 +209,8 @@ static volatile rts_info_t* sMenuRts;
 static const char* modeLabel(void)
 {
     u32 o = sMenuRts->options;
+    if (o & RTS_OPTION_TWL)
+        return "Mode: basic (dsi mode)"; // no register shadow there yet
     int now = (o & RTS_OPTION_BASIC) != 0, next = (o & RTS_OPTION_NEXT_BASIC) != 0;
     if (now == next)
         return now ? "Mode: basic" : "Mode: full";
@@ -530,7 +532,9 @@ u32 rtsMain(void* block)
                 {
                     waitRelease();
                     int basic = !(rts->options & RTS_OPTION_NEXT_BASIC);
-                    if (!writeMode(basic))
+                    if (rts->options & RTS_OPTION_TWL)
+                        drawStatus("DSi mode games run basic", COLOR_BAD);
+                    else if (!writeMode(basic))
                         drawStatus("Mode file not written", COLOR_BAD);
                     else
                     {

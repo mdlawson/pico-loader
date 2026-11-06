@@ -62,10 +62,9 @@ static u32 V(volatile u32* v, u32 offset)
 
 static void setNibble(volatile u32* v, u32 nibble)
 {
-    u32 perm;
-    asm volatile("mrc p15, 0, %0, c5, c0, 2" : "=r"(perm));
+    u32 perm = cp15Read(6);
     perm = (perm & ~V(v, V_NIB_MASK)) | nibble;
-    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(perm) : "memory");
+    cp15WritePermissions(perm);
 }
 
 int censusPresent(void)

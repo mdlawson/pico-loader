@@ -13,6 +13,12 @@
 // The irq table address and the irq return address literals follow it.
 static const u32 sIrqDispatchTailPattern[] = { 0xE59F1008u, 0xE7910100u, 0xE59FE004u, 0xE12FFF10u };
 
+// The twl sdk's arm7 irq handler (dsi mode): the IF path ends
+// str r2, [ip, #4]; ldr r1, =table; ldr r0, [r1, r0, lsl #2]; b tail, the IF2
+// path the same with its own table, and the tail they share keeps the thread's
+// registers: ldr r2, =regs; stmia r2, {r4-r11, sp}; ldr lr, =return; bx r0.
+static const u32 sTwlTailPattern[] = { 0xE59F2010u, 0xE8822FF0u, 0xE59FE00Cu, 0xE12FFF10u };
+
 // Where the SDK's nested irq handler calls a handler out of the same table:
 // ldr r1, [ip, #0x210]; stmfd sp!, {r1}; add lr, pc, #0; bx r0. The microphone
 // sampling puts that handler in the irq vector, and a game that keeps sampling,
@@ -32,7 +38,28 @@ bool ExitComboArm7Patch::FindPatchTarget(PatchContext& patchContext)
     _dispatchTail = patchContext.FindPattern32(sIrqDispatchTailPattern, sizeof(sIrqDispatchTailPattern));
     if (_dispatchTail)
     {
+        _irqTable = _dispatchTail[4];
+        _irqReturn = _dispatchTail[5];
         LOG_DEBUG("Arm7 irq dispatch tail found at 0x%p\n", _dispatchTail);
+    }
+    else if (u32* tail = patchContext.FindPattern32(sTwlTailPattern, sizeof(sTwlTailPattern)))
+    {
+        // the IF path, a little before: its branch goes to the tail
+        for (u32* p = tail - 4; p >= tail - 32 && !_dispatchTail; p--)
+        {
+            if (p[0] != 0xE58C2004u || (p[1] & 0xFFFFF000u) != 0xE59F1000u || p[2] != 0xE7910100u
+                || (p[3] & 0xFF000000u) != 0xEA000000u)
+                continue;
+            u32* target = p + 3 + 2 + ((s32)(p[3] << 8) >> 8);
+            if (target != tail)
+                continue;
+            // the literals hold run addresses, wherever the handler is copied to
+            _dispatchTail = p + 1;
+            _irqTable = *(u32*)((u8*)(p + 1) + 8 + (p[1] & 0xFFF));
+            _twlRegs = tail[6];
+            _irqReturn = tail[7];
+        }
+        LOG_DEBUG("Arm7 twl irq tail at 0x%p, IF path %s\n", tail, _dispatchTail ? "found" : "not found");
     }
     else
     {
@@ -112,12 +139,13 @@ void ExitComboArm7Patch::ApplyPatch(PatchContext& patchContext)
         blockAddress,
         sdRead,
         sdWrite,
-        _dispatchTail[4], // irq table address literal
-        _dispatchTail[5], // irq return address literal
+        _irqTable,
+        _irqReturn,
         _prioReturnOffset,
         _patchSpaceAddress,
         _patchSpaceAddress ? ARM7_PATCH_SPACE_SIZE : 0,
-        _shadow7Address
+        _shadow7Address,
+        _twlRegs
     );
     _shadow7Literal = exitComboPatchCode->GetShadow7Literal();
 

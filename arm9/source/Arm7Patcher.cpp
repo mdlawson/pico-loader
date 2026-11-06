@@ -38,6 +38,37 @@ static u32 correctAddress(u32 address, bool runInDSiMode)
     }
 }
 
+// The twl sdk's arm7 os init ends by locking scfg (SCFG_EXT7 bit 31), for good
+// until a hardware reset:
+//     ldr r1, =0x04004008; ldr r0, [r1]; bic r0, r0, #0x80000000; str r0, [r1]
+// The in-game exit reboots into Pico Loader, which then can no longer map the
+// new wram or set scfg up for the launcher, so leave the bit set: the bic
+// becomes a nop. The arm9 stays locked out of these registers either way.
+static void keepScfgOpenIn(u32* code, u32 size)
+{
+    if (!code)
+        return;
+    for (u32 i = 1; i + 3 <= size / 4; i++)
+    {
+        if (code[i] != 0xE5910000 || code[i + 1] != 0xE3C00102 || code[i + 2] != 0xE5810000
+            || (code[i - 1] & 0xFFFFF000) != 0xE59F1000)
+            continue;
+        u32 literal = (u32)&code[i - 1] + 8 + (code[i - 1] & 0xFFF);
+        if (literal < (u32)code || literal + 4 > (u32)code + size || *(u32*)literal != 0x04004008)
+            continue;
+        code[i + 1] = 0xE1A00000; // mov r0, r0
+        LOG_DEBUG("Arm7 scfg lock at 0x%x left out\n", (u32)&code[i + 1]);
+        return;
+    }
+    LOG_DEBUG("Arm7 scfg lock not found in 0x%x\n", (u32)code);
+}
+
+static void keepScfgOpen(const nds_header_ntr_t* romHeader, const nds_header_twl_t* twlRomHeader)
+{
+    keepScfgOpenIn((u32*)romHeader->arm7LoadAddress, romHeader->arm7Size);
+    keepScfgOpenIn((u32*)twlRomHeader->arm7iLoadAddress, twlRomHeader->arm7iSize);
+}
+
 void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheatsLength, void*& cheatsPtr,
     char*& bannerSavePathPtr, bool exitComboArm9Installed, bool& exitComboArm7Installed, bool runInDSiMode,
     bool keepDsiBios, void*& censusSpace, u32& censusRunAddress, u32& censusSize, u32& wramExtraSize) const
@@ -190,10 +221,12 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         // patch heap a mandatory patch needs. Because ApplyPatch runs in insertion
         // order, every mandatory patch above allocates first and the exit combo
         // only claims what is left (and gives up when nothing fits). The arm9
-        // half already left out DSi mode, DSiWare and the Pokemon downloader.
+        // half already left out DSiWare and the Pokemon downloader.
         if (exitComboArm7Patch != nullptr)
         {
             patchCollection.AddPatch(exitComboArm7Patch);
+            if (runInDSiMode)
+                keepScfgOpen(romHeader, twlRomHeader);
         }
 
         // The register-write census, for the exit combo's hook to run on the arm9,
@@ -210,7 +243,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
         // twl sdk games too: the exit combo only goes in where they run in ds mode
         u32 shadow7Size = 0, shadow7Run = 0, shadow7Pool = 0;
         void* shadow7Space = nullptr;
-        if (exitComboArm7Patch != nullptr && !ShadowInstall::BasicMode())
+        if (exitComboArm7Patch != nullptr && !runInDSiMode && !ShadowInstall::BasicMode())
         {
             ShadowInstall7::Collect(romHeader);
             shadow7Size = (ShadowInstall7::SpaceNeeded() + 31) & ~31u;
@@ -230,7 +263,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             else
                 shadow7Pool = shadow7Size;
         }
-        if (exitComboArm7Patch != nullptr && ShadowInstall::SpaceNeeded() + shadow7Pool != 0)
+        if (exitComboArm7Patch != nullptr && !runInDSiMode && ShadowInstall::SpaceNeeded() + shadow7Pool != 0)
         {
             // the trap-free shadow, from the same place; the arm9 reaches it once
             // its install switches off the sdk's region 2

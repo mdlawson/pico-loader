@@ -1359,15 +1359,18 @@ void NdsLoader::SetupRtsStateFile()
     }
     else
     {
-        // slot 1, then slots 2 and 3 for the restore test (rtsmenu: "Test")
+        // slot 1, then slots 2 and 3 for the restore test (rtsmenu: "Test"). In
+        // dsi mode bigger (16 MB of main memory) and apart, so a game's ds mode
+        // states stay.
         u32 sectors[3];
+        u32 stateSize = _runInDSiMode ? RTS_STATE_SIZE_TWL : RTS_STATE_SIZE;
         for (int slot = 0; slot < 3; slot++)
         {
-            mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s-%d.rts", code, slot + 1);
-            sectors[slot] = makeContiguousFile(path, RTS_STATE_SIZE, 0);
+            mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s-%d%s.rts", code, slot + 1, _runInDSiMode ? "-dsi" : "");
+            sectors[slot] = makeContiguousFile(path, stateSize, 0);
         }
         rts.stateSector = sectors[0];
-        rts.stateSectorCount = sectors[0] ? RTS_STATE_SIZE / 512 : 0;
+        rts.stateSectorCount = sectors[0] ? stateSize / 512 : 0;
         rts.testSlotSector[0] = sectors[1];
         rts.testSlotSector[1] = sectors[2];
         rts.logSector = makeContiguousFile(RTS_LOG_PATH, RTS_LOG_SIZE, ' ');
@@ -1376,10 +1379,14 @@ void NdsLoader::SetupRtsStateFile()
         mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s.cfg", code);
         rts.configSector = readRtsConfig(path, basic);
         rts.options = basic ? (RTS_OPTION_BASIC | RTS_OPTION_NEXT_BASIC) : 0;
+        // dsi mode has no register shadow yet: basic whatever the file says
+        if (_runInDSiMode)
+            rts.options |= RTS_OPTION_TWL | RTS_OPTION_BASIC;
         mini_snprintf(status, sizeof(status),
-            "save state: %s mode %s, slot 1 at sector %u, test slots 2 and 3 at %u and %u, log at %u%s\r\n",
-            code, basic ? "basic" : "full", sectors[0], sectors[1], sectors[2], rts.logSector,
-            sectors[0] ? "." : " (slot 1 missing: no free run of 5 MB?).");
+            "save state: %s%s mode %s, slot 1 at sector %u, test slots 2 and 3 at %u and %u, log at %u%s\r\n",
+            code, _runInDSiMode ? " (dsi mode)" : "", (rts.options & RTS_OPTION_BASIC) ? "basic" : "full",
+            sectors[0], sectors[1], sectors[2], rts.logSector,
+            sectors[0] ? "." : _runInDSiMode ? " (slot 1 missing: no free run of 18 MB?)." : " (slot 1 missing: no free run of 5 MB?).");
     }
     LOG_DEBUG("Rts: %s", status);
     FIL statusFile;

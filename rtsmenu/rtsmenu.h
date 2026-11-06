@@ -59,6 +59,7 @@ typedef struct
 #define RTS_CONFIG_SIZE 512
 #define RTS_OPTION_BASIC        1 // this boot is basic: no register shadow
 #define RTS_OPTION_NEXT_BASIC   2 // what the mode file says now
+#define RTS_OPTION_TWL          4 // dsi mode: 16 MB of main ram and the new wram (state.h)
 
 #define TEST_REFERENCE  1 // the freeze writes slot 2
 #define TEST_COMPARE    2 // the freeze writes slot 3 and compares it with slot 2
@@ -120,24 +121,10 @@ u32 compareTestSlots(void* block, void (*progress)(u32 done, u32 total));
 // Asks stateLeave to check the registers and write the log.
 extern int gCheckOnLeave;
 
-static inline void dcFlushAll(void)
-{
-    // clean and invalidate by set/way: 4 ways of 32 lines of 32 bytes
-    for (u32 way = 0; way < 4; way++)
-        for (u32 line = 0; line < 32; line++)
-            asm volatile("mcr p15, 0, %0, c7, c14, 2" :: "r"((way << 30) | (line << 5)) : "memory");
-    asm volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(0) : "memory");
-}
-
-static inline void icInvalidateAll(void)
-{
-    asm volatile("mcr p15, 0, %0, c7, c5, 0" :: "r"(0) : "memory");
-}
-
-static inline void dcInvalidateLine(const volatile void* p)
-{
-    asm volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(p) : "memory");
-}
+// cp15.c (arm code, for the thumb files)
+void dcFlushAll(void);       // clean and invalidate the data cache, drain the write buffer
+void icInvalidateAll(void);
+void dcInvalidateLine(const volatile void* p);
 
 // The census report into the log's fifth section (check.c); 0 when not written.
 int censusWriteLog(void* block, char* line1, char* line2);

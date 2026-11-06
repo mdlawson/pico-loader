@@ -83,9 +83,11 @@ cancel:
     b dispatch
 
 notTaken:
-    // only armed when the loader stored a valid launcher path
-    ldr r2, [r1, #4] // exit_request_block_t::pathMagic
-    ldr r3, pathMagic
+    // Only armed when the loader stored a valid launcher path. The checksum is
+    // compared rather than pathMagic, which the twl sdk zeroes at boot (its os
+    // init clears 0x02FFF684); park writes pathMagic back for the reboot.
+    ldr r2, [r1, #8] // exit_request_block_t::pathChecksum
+    ldr r3, patch_exitcombo_arm7_path_checksum
     cmp r2, r3
     bne dispatch
 
@@ -212,6 +214,11 @@ park:
     str r2, [r3, #0x2C] // DMA3CNT
     ldr r3, regSoundCnt
     strh r2, [r3]
+    // A dsi mode game locked the new wram slots it got (MBK9, from its header),
+    // and Pico Loader's arm9 maps them before its arm7 is up: unlock them while
+    // scfg still allows it. A no-op in ds mode.
+    ldr r3, regMbk9
+    str r2, [r3]
 
     // Wait from arm7 wram, never from main memory. Pico Loader boots games with
     // main memory priority on the arm7 (EXMEMCNT bit 15), and a loop fetching its
@@ -231,6 +238,8 @@ park:
     ldr r3, regIpcSync
     mov r2, #1
     strb r2, [r3, #1] // sync out = 1, parked
+    ldr r2, pathMagic
+    str r2, [r1, #4] // exit_request_block_t::pathMagic, for the reboot's check
     ldr r2, parkMagic
     str r2, [r1, #0x0C] // exit_request_block_t::comboMagic
     bx r0
@@ -897,9 +906,13 @@ dispatch:
     cmp lr, #0
     bne prioReturn
 
-    // the dispatcher tail displaced by the hook
+    // the dispatcher tail displaced by the hook; the twl sdk's dsi mode arm7
+    // handler also keeps the thread's registers there before the call
     ldr r1, patch_exitcombo_arm7_table_address
     ldr r0, [r1, r0, lsl #2]
+    ldr r1, patch_exitcombo_arm7_twlregs_address
+    cmp r1, #0
+    stmiane r1, {r4-r11, sp}
     ldr lr, patch_exitcombo_arm7_return_address
     bx r0
 
@@ -985,6 +998,9 @@ regIpcSync:
 
 // The bottom of the game's arm7 stacks, right above its wram arena. Arm7Patcher
 // only puts the patch heap in arm7 wram when it ends 0x2100 bytes below this.
+regMbk9:
+    .word 0x04004060
+
 parkWaitAddress:
     .word 0x0380F780
 
@@ -1094,6 +1110,10 @@ shadow7Magic:
 patch_exitcombo_arm7_shadow7_address:
     .word 0
 
+.global patch_exitcombo_arm7_path_checksum
+patch_exitcombo_arm7_path_checksum:
+    .word 0
+
 .global patch_exitcombo_arm7_block_address
 patch_exitcombo_arm7_block_address:
     .word 0
@@ -1108,6 +1128,10 @@ patch_exitcombo_arm7_return_address:
 
 .global patch_exitcombo_arm7_prioreturn_offset
 patch_exitcombo_arm7_prioreturn_offset:
+    .word 0
+
+.global patch_exitcombo_arm7_twlregs_address
+patch_exitcombo_arm7_twlregs_address:
     .word 0
 
 .global patch_exitcombo_arm7_space_address

@@ -330,12 +330,12 @@ static int compareWords(const char* name, u32 offset, u32 size, u32 from)
 static void openPermissions(u32* saved)
 {
     *saved = cp15Read(6);
-    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(0x11111111) : "memory");
+    cp15WritePermissions(0x11111111);
 }
 
 static void closePermissions(u32 saved)
 {
-    asm volatile("mcr p15, 0, %0, c5, c0, 2" :: "r"(saved) : "memory");
+    cp15WritePermissions(saved);
 }
 
 // The arm7's irq sp at its command loop, from a slot's arm7 context.
@@ -357,6 +357,25 @@ static void addArm7WramSkips(u32 sp)
 }
 
 // ---------------------------------------------------------------- load check
+
+// dsi mode: the new wram's slots that are mapped, through their cpu (or slot 3)
+static void addTwlParts(int src)
+{
+    static const char* const names[3] = { "wram A", "wram B", "wram C" };
+    for (int s = 0; TWL_MODE && s < TWL_SLOTS; s++)
+    {
+        int arm7 = 0;
+        u32 offset, size, at = twlSlot(s, &arm7, &offset, &size);
+        int from = src == SRC_SLOT3 ? src : arm7 ? SRC_ARM7 : SRC_ARM9;
+        part_t* last = &sParts[sPartCount - 1];
+        // a bank's slots in order are one part (MAX_PARTS)
+        if (at && last->source == from && last->offset + last->size == offset && last->address + last->size == at
+            && last->name == names[s < 4 ? 0 : s < 12 ? 1 : 2])
+            last->size += size;
+        else if (at)
+            addPart(names[s < 4 ? 0 : s < 12 ? 1 : 2], offset, size, at, from, 0);
+    }
+}
 
 u32 checkLoadedMemory(void* block, void (*progress)(u32 done, u32 total))
 {
@@ -392,7 +411,11 @@ u32 checkLoadedMemory(void* block, void (*progress)(u32 done, u32 total))
             addPart(bankNames[i], offset, sBanks[i].size, sBanks[i].lcdc, SRC_VRAM, i);
         offset += sBanks[i].size;
     }
-    addPart("main ram", STATE_MAIN_RAM, 0x400000, 0x02000000, SRC_ARM9, 0);
+    addPart("main ram", STATE_MAIN_RAM, gMainSize, 0x02000000, SRC_ARM9, 0);
+    u32 dtcmEnd, dtcmMain = dtcmOverMain(&dtcmEnd);
+    if (dtcmMain) // the ram under the dtcm, as the arm7 sees it
+        addPart("main (dtcm)", STATE_MAIN_RAM + (dtcmMain - 0x02000000), dtcmEnd - dtcmMain, dtcmMain, SRC_ARM7, 0);
+    addTwlParts(SRC_ARM9);
     addPart("main (stash)", STATE_MAIN_RAM + (RTS_BASE - 0x02000000), RTS_STASH_SIZE, RTS_BASE, SRC_STASH, 0);
 
     u32 keep[KEEP_RANGES][2];
@@ -414,8 +437,11 @@ u32 checkLoadedMemory(void* block, void (*progress)(u32 done, u32 total))
         if (p->address == 0x03800000)
             addArm7WramSkips(sp);
         if (p->address == 0x02000000)
+        {
             for (int k = 0; k < KEEP_RANGES; k++)
                 addSkip(0x02000000 + keep[k][0], 0x02000000 + keep[k][1]);
+            addSkip(dtcmMain, dtcmEnd); // its own part
+        }
         differ += comparePart(1, p);
     }
     closePermissions(permissions);
@@ -659,7 +685,8 @@ u32 compareTestSlots(void* block, void (*progress)(u32 done, u32 total))
         addPart(bankNames[i], offset, sBanks[i].size, sBanks[i].lcdc, SRC_SLOT3, 0);
         offset += sBanks[i].size;
     }
-    addPart("main ram", STATE_MAIN_RAM, 0x400000, 0x02000000, SRC_SLOT3, 0);
+    addPart("main ram", STATE_MAIN_RAM, gMainSize, 0x02000000, SRC_SLOT3, 0);
+    addTwlParts(SRC_SLOT3);
 
     u32 keep[KEEP_RANGES][2];
     mainRamKeep(block, keep);

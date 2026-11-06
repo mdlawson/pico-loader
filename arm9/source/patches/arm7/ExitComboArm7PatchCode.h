@@ -1,6 +1,7 @@
 #pragma once
 #include "sections.h"
 #include "patches/PatchCode.h"
+#include "sharedMemory.h"
 
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_arm7);
 
@@ -10,9 +11,11 @@ extern "C" void patch_exitcombo_arm7_sdread(void);
 extern "C" void patch_exitcombo_arm7_sdwrite(void);
 
 extern u32 patch_exitcombo_arm7_block_address;
+extern u32 patch_exitcombo_arm7_path_checksum;
 extern u32 patch_exitcombo_arm7_table_address;
 extern u32 patch_exitcombo_arm7_return_address;
 extern u32 patch_exitcombo_arm7_prioreturn_offset;
+extern u32 patch_exitcombo_arm7_twlregs_address;
 extern u32 patch_exitcombo_arm7_space_address;
 extern u32 patch_exitcombo_arm7_space_size;
 extern u32 patch_exitcombo_arm7_sdread_address;
@@ -24,10 +27,11 @@ class ExitComboArm7PatchCode : public PatchCode
 public:
     ExitComboArm7PatchCode(PatchHeap& patchHeap, u32 blockAddress, u32 sdReadAddress,
         u32 sdWriteAddress, u32 irqTableAddress, u32 irqReturnAddress, u32 prioReturnOffset,
-        u32 patchSpaceAddress, u32 patchSpaceSize, u32 shadow7Address)
+        u32 patchSpaceAddress, u32 patchSpaceSize, u32 shadow7Address, u32 twlRegsAddress)
         : PatchCode(SECTION_START(patch_exitcombo_arm7), SECTION_SIZE(patch_exitcombo_arm7), patchHeap)
     {
         patch_exitcombo_arm7_block_address = blockAddress;
+        patch_exitcombo_arm7_path_checksum = TWL_SHARED_MEMORY->exitRequest.pathChecksum;
         patch_exitcombo_arm7_sdread_address = sdReadAddress;
         patch_exitcombo_arm7_sdwrite_address = sdWriteAddress;
         patch_exitcombo_arm7_table_address = irqTableAddress;
@@ -36,6 +40,7 @@ public:
         patch_exitcombo_arm7_space_address = patchSpaceAddress;
         patch_exitcombo_arm7_space_size = patchSpaceSize;
         patch_exitcombo_arm7_shadow7_address = shadow7Address;
+        patch_exitcombo_arm7_twlregs_address = twlRegsAddress;
     }
 
     u32* GetShadow7Literal() const

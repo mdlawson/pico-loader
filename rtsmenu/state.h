@@ -8,8 +8,9 @@
 #include <stdint.h>
 
 #define STATE_MAGIC             0x53545250 // 'PRTS'
-#define STATE_VERSION           5 // 2: with the arm7 context; 3: ipc fifo words, more arm7 registers;
-                                  // 4: the arm9 timers' counts and measured reloads; 5: the zero map
+#define STATE_VERSION           6 // 2: with the arm7 context; 3: ipc fifo words, more arm7 registers;
+                                  // 4: the arm9 timers' counts and measured reloads; 5: the zero map;
+                                  // 6: dsi mode files (mainSize)
 
 #define STATE_HEADER            0x000000 // state_header_t, 0x200
 #define STATE_ARM9_IO           0x000200 // 0x1100: 0x04000000-0x04000FFF, then 0x04001000-0x040010FF;
@@ -32,6 +33,17 @@
 #define STATE_VRAM              0x029000 // 0xA4000: banks A-I in order, each in full
 #define STATE_MAIN_RAM          0x100000 // 0x400000, 0x02000000
 #define STATE_END               0x500000
+
+// A game in dsi mode (header mainSize 0x1000000): the same up to the main ram,
+// which is 16 MB, then the new wram's slots; its zero map is bigger, in its
+// own place, and twl_info_t says how the new wram was mapped.
+#define STATE_TWL_ZERO_MAP      0x002000 // 0x600: covers the whole file
+#define STATE_TWL_ZERO_MAP_SIZE 0x600
+#define STATE_TWL_INFO          0x002800 // 0x200: twl_info_t
+#define STATE_TWL_MAIN_SIZE     0x1000000
+#define STATE_TWL_WRAM          0x1100000 // 0xC0000: wram A slots 0-3 (64 KB each), then B and C 0-7 (32 KB)
+#define STATE_TWL_END           0x11C0000
+#define TWL_SLOTS               20 // A 0-3, B 0-7, C 0-7
 
 typedef struct
 {
@@ -94,6 +106,9 @@ typedef struct
     // version 5: 1 when STATE_ZERO_MAP is valid
     uint32_t zeroMap;
 
+    // version 6: the main ram's size, 0 for 4 MB; 0x1000000 in dsi mode
+    uint32_t mainSize;
+
 } state_header_t;
 
 #define STATE_EXTRA_MAGIC       0x34585250 // 'PRX4'
@@ -112,7 +127,24 @@ typedef struct
     uint32_t gxValid;
 } state_extra_t;
 
+#define TWL_INFO_MAGIC          0x57545250 // 'PRTW'
+
+// How the dsi's new wram was mapped (it is read and written through those
+// windows), in its own sector.
+typedef struct
+{
+    uint32_t magic;             // TWL_INFO_MAGIC
+    uint8_t mbk[20];            // MBK1-5 (0x04004040): per slot, its cpu and place
+    uint32_t window9[3];        // MBK6-8 as the arm9 has them: wram A, B, C
+    uint32_t window7[3];        // and the arm7
+    uint32_t saved;             // bit per slot (A 0-3, B 4-11, C 12-19): in the file
+    uint32_t scfgExt9;          // 0x04004008, as found
+} twl_info_t;
+
 _Static_assert(sizeof(state_header_t) <= 0x200, "state header is one sector");
+_Static_assert(STATE_TWL_ZERO_MAP >= STATE_ZERO_MAP + STATE_ZERO_MAP_SIZE && STATE_TWL_INFO + 0x200 <= STATE_ITCM, "twl sectors fit");
+_Static_assert(STATE_TWL_END / STATE_ZERO_BLOCK / 8 <= STATE_TWL_ZERO_MAP_SIZE, "twl zero map fits");
+_Static_assert(STATE_MAIN_RAM + STATE_TWL_MAIN_SIZE == STATE_TWL_WRAM && STATE_TWL_WRAM + 0xC0000 == STATE_TWL_END, "twl layout");
 _Static_assert(sizeof(state_extra_t) <= 0x200, "extra is one sector");
 _Static_assert(STATE_ARM7_IO + 0x400 <= STATE_EXTRA, "extra after the arm7 context");
 _Static_assert(STATE_ZERO_MAP + STATE_ZERO_MAP_SIZE <= STATE_ITCM && STATE_END / STATE_ZERO_BLOCK / 8 <= STATE_ZERO_MAP_SIZE, "zero map fits");
