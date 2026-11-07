@@ -280,7 +280,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             censusSize = want < room ? want : room;
             if (start >= 0x02000000 && start < 0x02800000 && offset + censusSize <= 0x3FF000)
             {
-                censusSpace = (void*)correctAddress(start, romHeader);
+                censusSpace = (void*)correctAddress(start, runInDSiMode);
                 censusRunAddress = 0x02000000 + offset;
                 mainMemoryArenaLo = start + censusSize;
                 LOG_DEBUG("Shadow space at 0x%x, 0x%x bytes\n", censusRunAddress, censusSize);
@@ -306,7 +306,7 @@ void* Arm7Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, u32 cheats
             {
                 // written through the loader's view of main memory, run at
                 // the game's: the arm9's protection unit only maps the 4 MB
-                censusSpace = (void*)correctAddress(start, romHeader);
+                censusSpace = (void*)correctAddress(start, runInDSiMode);
                 censusRunAddress = 0x02000000 + offset;
                 mainMemoryArenaLo = start + censusSize;
                 LOG_DEBUG("Census space at 0x%x, 0x%x bytes, written at 0x%p\n", censusRunAddress, censusSize, censusSpace);
