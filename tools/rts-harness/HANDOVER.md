@@ -209,6 +209,50 @@ Still open (`~/emu/results/sweep3_ds/triage.txt` has the list):
 - DSi mode: Solatorobo and Pokemon White 2 at some points (basic mode only in DSi mode).
 - Measured timer reloads can be one off (tm9.1 in Trauma Center 2): the wrap is read a tick late.
 
+## Autopilot: the restore test on real hardware, unattended
+
+A separate build (`RTS_AUTOPILOT=1`; release builds have none of it) runs the same kind of test
+as the sweep on a real DSpico, one boot per run, with no one pressing anything:
+
+- The launcher (`launcher/`, at `/launcher.nds`) works through `/_pico/autolist.txt`, lines
+  `rom|saveFrame|gapFrames`. Before each boot it blanks `/_pico/rtslog.txt` and writes
+  `/_pico/autotest.txt`, which the loader reads once and deletes; after each run it appends the
+  result to `/_pico/autoresults.txt` (`index|rom|frame|gap|memory N|registers N|run N`, the load
+  check's and the comparison's counts, as the menu reports them) and boots the next. Where it is
+  goes in `/_pico/autostate.txt` (delete it to start again). A run that never came back (a crash,
+  then a power cycle and the launcher started again) is recorded as `no result`.
+- The loader points the game's KEYINPUT literal pool words (0x04000130, read pc-relative, in the
+  arm9 and its autoloads) at a word in the shared page (`rts_autopilot_t`, block + 0x170).
+  97 of the 100 library games have such literals (not: Professor Layton 2-4; overlays aren't done).
+- The arm7 hook (ExitComboArm7PatchCode.s, `autopilotTick`) writes that word every vblank: live
+  keys with the script's presses (A every 40 frames from 300, START 10 frames after every fifth A
+  until 3500, from 2540 a d-pad direction 50 frames in 120; nothing in the last 40 frames), and
+  freezes the game at saveFrame (counted from the game's start, not from power on as in dshost).
+  No touch yet.
+- The menu (`RTS_AUTOPILOT` in rtsmenu) skips its list: save + reference at that freeze, the gap,
+  load + compare (no A to confirm), the comparison, then exit to the launcher.
+
+Build and an sd card folder:
+
+```bash
+RTS_AUTOPILOT=1 ./make_pico.sh ~/emu/rts_pico_auto
+```
+
+```bash
+./sweep.py autosd lists/library.txt /Volumes/SDCARD --frames 1500,4500,9000
+```
+
+(`--only code,...` for a subset; the roms go to `/roms/<code>.nds`.) In melonDS the same folder
+runs with `./dsrun.sh FOLDER 30000` (the launcher cycles by itself; results land in the folder).
+
+On the DS: use an sd card of its own (the autopilot `_pico` files replace the normal ones), start
+`/launcher.nds` from your launcher, and leave it. After a crash or hang, power-cycle and start
+`/launcher.nds` again: it records the dead run and goes on. Unattended crash recovery needs a
+relay on the power switch and a launcher that starts `/launcher.nds` at power on.
+
+The arm7 code is tight in the autopilot build: 3356 bytes, exactly what Mario Kart DS's arm7 patch
+space had left; all 99 games with the exit combo still took it (checked by booting each).
+
 ## Playing games for deeper test points (play.py)
 
 `rtsall.sh` only reaches what scripted key presses reach. For deeper scenes, an agent plays the

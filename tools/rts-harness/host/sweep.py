@@ -3,6 +3,12 @@
 
   sweep.py run LIBRARY OUTDIR [--frames 1500,2500,...] [--mode ds|dsi] [--only code,...]
   sweep.py report OUTDIR          summary.tsv, contact sheets and the triage list
+  sweep.py autosd LIBRARY SDDIR [--frames ...] [--only ...] [--pico DIR]
+                                  an sd card folder for the autopilot (real hardware or
+                                  dsrun.sh): launcher, the autopilot _pico set (make_pico.sh
+                                  with RTS_AUTOPILOT=1, default ~/emu/rts_pico_auto), the
+                                  roms in /roms and /_pico/autolist.txt, one run per game
+                                  and save frame
 
 LIBRARY is mklib.py's list (code|rom|unit|title). Every game gets the same generic input
 (generic_input below): A taps, centre-screen touches and START presses to get through title
@@ -22,7 +28,7 @@ OUTDIR/sheets/<code>.png (the screen at each save point, top over bottom, in fra
 with the differing count drawn as a bar under each: green 0-3, amber 4-10, red more or
 failed), OUTDIR/sheets/index.png (every game's row, small) and OUTDIR/triage.txt.
 """
-import os, sys, subprocess, struct, zlib, re
+import os, sys, subprocess, struct, zlib, re, shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_FRAMES = [1500, 2500, 3500, 4500, 6000, 7500, 9000]
@@ -153,6 +159,39 @@ def color(r):
     return (40, 180, 70) if s <= 3 else (230, 160, 30) if s <= 10 else (220, 40, 40)
 
 
+def cmd_autosd(argv):
+    lib, sd = argv[0], argv[1]
+    frames, only, pico = [1500, 4500, 9000], None, os.path.expanduser("~/emu/rts_pico_auto")
+    i = 2
+    while i < len(argv):
+        if argv[i] == "--frames": frames = [int(x) for x in argv[i + 1].split(",")]; i += 2
+        elif argv[i] == "--only": only = set(argv[i + 1].split(",")); i += 2
+        elif argv[i] == "--pico": pico = argv[i + 1]; i += 2
+        else: sys.exit(f"unknown argument {argv[i]}")
+    roms = os.environ.get("ROMS", os.path.expanduser("~/emu/roms"))
+    games = [g for g in read_lib(lib) if not only or g[0] in only]
+    os.makedirs(os.path.join(sd, "_pico"), exist_ok=True)
+    os.makedirs(os.path.join(sd, "roms"), exist_ok=True)
+    for f in os.listdir(pico):
+        shutil.copyfile(os.path.join(pico, f), os.path.join(sd, "_pico", f))
+    shutil.copyfile(os.path.join(os.path.dirname(HERE), "launcher", "launcher.nds"), os.path.join(sd, "launcher.nds"))
+    lines = []
+    for code, rom, unit, title in games:
+        dest = os.path.join(sd, "roms", code + ".nds")
+        if not os.path.exists(dest):
+            shutil.copyfile(os.path.join(roms, rom), dest)
+        for fr in frames:
+            lines.append(f"/roms/{code}.nds|{fr}|300")
+    with open(os.path.join(sd, "_pico", "autolist.txt"), "w") as w:
+        w.write("# rom|save frame|gap frames: one restore test run a line (see HANDOVER.md, Autopilot)\n")
+        w.write("\n".join(lines) + "\n")
+    for f in ("autostate.txt", "autoresults.txt", "autotest.txt"):
+        p = os.path.join(sd, "_pico", f)
+        if os.path.exists(p):
+            os.remove(p)
+    print(f"{len(lines)} runs ({len(games)} games x {len(frames)} save frames) in {sd}")
+
+
 def cmd_report(argv):
     out = argv[0]
     titles = {}
@@ -211,6 +250,6 @@ def cmd_report(argv):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3 or sys.argv[1] not in ("run", "report"):
+    if len(sys.argv) < 3 or sys.argv[1] not in ("run", "report", "autosd"):
         sys.exit(__doc__)
-    {"run": cmd_run, "report": cmd_report}[sys.argv[1]](sys.argv[2:])
+    {"run": cmd_run, "report": cmd_report, "autosd": cmd_autosd}[sys.argv[1]](sys.argv[2:])

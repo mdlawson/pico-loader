@@ -25,6 +25,11 @@ AUDIODIRS	:=
 PLATFORM	?= DSPICO
 
 DEFINES		:= -DLIBTWL_ARM9 -DARM9 -DPICO_LOADER_TARGET_$(PLATFORM)
+# RTS_AUTOPILOT=1: the autopilot test build (unattended restore tests; tools/rts-harness)
+ifeq ($(RTS_AUTOPILOT),1)
+DEFINES		+= -DRTS_AUTOPILOT
+NAME_SUFFIX	:= _autopilot
+endif
 # RTS_CENSUS=1: build in the register-write census (a measurement build)
 ifeq ($(RTS_CENSUS),1)
 DEFINES		+= -DRTS_CENSUS

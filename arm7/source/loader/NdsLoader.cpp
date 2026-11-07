@@ -1353,6 +1353,50 @@ static u32 readRtsConfig(const char* path, bool& basic)
     return sector;
 }
 
+#ifdef RTS_AUTOPILOT
+static u32 autopilotNumber(const char* text, const char* key, u32 fallback)
+{
+    const char* p = strstr(text, key);
+    if (!p)
+        return fallback;
+    p += strlen(key);
+    u32 v = 0;
+    bool any = false;
+    while (*p >= '0' && *p <= '9')
+    {
+        v = v * 10 + (*p++ - '0');
+        any = true;
+    }
+    return any ? v : fallback;
+}
+
+/// @brief The autopilot build: RTS_AUTOPILOT_PATH (frame=N, gap=N) arms the autopilot
+///        for this boot only, and goes. Without it the autopilot stays off.
+static void setupAutopilot()
+{
+    auto& ap = TWL_SHARED_MEMORY->autopilot;
+    ap.keys = 0x3FF;
+    ap.keycnt = 0;
+    ap.saveFrame = 0;
+    ap.frame = 0;
+    ap.step = RTS_AUTOPILOT_PLAY;
+    ap.gapFrames = 300;
+    auto file = std::make_unique<FIL>();
+    if (f_open(file.get(), RTS_AUTOPILOT_PATH, FA_READ) != FR_OK)
+        return;
+    char text[128];
+    UINT bytesRead = 0;
+    if (f_read(file.get(), text, sizeof(text) - 1, &bytesRead) != FR_OK)
+        bytesRead = 0;
+    text[bytesRead] = 0;
+    f_close(file.get());
+    f_unlink(RTS_AUTOPILOT_PATH);
+    ap.gapFrames = autopilotNumber(text, "gap=", 300);
+    ap.saveFrame = autopilotNumber(text, "frame=", 0);
+    LOG_DEBUG("Autopilot: save at frame %u, gap %u\n", ap.saveFrame, ap.gapFrames);
+}
+#endif
+
 void NdsLoader::SetupRtsStateFile()
 {
     auto& rts = TWL_SHARED_MEMORY->exitRequest.rts;
@@ -1360,6 +1404,9 @@ void NdsLoader::SetupRtsStateFile()
     {
         return;
     }
+#ifdef RTS_AUTOPILOT
+    setupAutopilot();
+#endif
     char path[48];
     char code[5];
     for (int i = 0; i < 4; i++)

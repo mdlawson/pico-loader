@@ -42,6 +42,9 @@ common:
     push {lr}
     mov r0, #12
     bl shadow7Call // the shadow's clock
+#ifdef RTS_AUTOPILOT
+    bl autopilotTick
+#endif
     pop {lr}
     mov r0, #0
 
@@ -808,6 +811,93 @@ holdEnd:
     ldmfd sp!, {r4-r11, lr}
     mov r0, #0 // the vblank index
     b dispatch
+
+#ifdef RTS_AUTOPILOT
+// ---------------------------------------------------------------- autopilot
+// Once a vblank (the autopilot build only; rts_autopilot_t at block + 0x170, off
+// while saveFrame is 0). While the step is PLAY: counts the frame, presses the
+// script's keys (A for 3 frames every 40 from frame 300, START 10 frames after
+// every fifth A until 3500, from 2540 a direction for 50 frames every 120: right,
+// down, left, up; nothing in the 40 frames before the save) and at saveFrame
+// freezes the game for the menu (step SAVE). Every step: keys = KEYINPUT with the
+// script's presses, which the game reads instead of KEYINPUT. Keeps r4-r11.
+autopilotTick:
+    push {r4-r6, lr}
+    ldr r4, patch_exitcombo_arm7_block_address
+    add r4, r4, #0x170
+    ldr r5, [r4, #4] // saveFrame
+    cmp r5, #0
+    beq 9f
+    mov r3, #0 // the keys pressed
+    ldrh r0, [r4, #12] // step
+    cmp r0, #0 // PLAY
+    bne 7f
+    ldr r6, [r4, #8] // frame
+    add r6, r6, #1
+    str r6, [r4, #8]
+    cmp r6, r5
+    bhs 8f
+    sub r0, r5, #40
+    cmp r6, r0
+    bhs 7f // quiet before the save
+    subs r6, r6, #300 // from here on, frames since 300
+    blo 7f
+    mov r0, r6
+    mov r1, #40
+    bl apDivMod
+    cmp r0, #3
+    orrlo r3, r3, #0x001 // A
+    cmp r6, #3200
+    bhs 1f
+    mov r0, r6
+    mov r1, #200
+    bl apDivMod
+    sub r0, r0, #10
+    cmp r0, #3
+    orrlo r3, r3, #0x008 // START
+1:
+    subs r0, r6, #2240
+    blo 7f
+    mov r1, #120
+    bl apDivMod
+    cmp r0, #50
+    bhs 7f
+    and r1, r1, #3
+    adr r0, apWalkKeys
+    ldrb r0, [r0, r1]
+    orr r3, r3, r0
+    b 7f
+8:
+    // the save: freeze as the test's own freeze does, once things are quiet
+    mov r0, #1 // RTS_AUTOPILOT_SAVE
+    strh r0, [r4, #12]
+    adrl r12, holdCounter
+    ldr r0, freezeComboMagic
+    str r0, [r12, #20] // requestKind
+    mov r0, #1
+    str r0, [r12, #4] // requestFrames
+7:
+    ldr r0, regKeyInput
+    ldrh r0, [r0]
+    bic r0, r0, r3
+    strh r0, [r4] // keys
+9:
+    pop {r4-r6, pc}
+
+// r0 = n, r1 = d (nonzero) -> r0 = n % d, r1 = n / d (by subtraction: n is small). Uses r2.
+apDivMod:
+    mov r2, #0
+1:
+    cmp r0, r1
+    subhs r0, r0, r1
+    addhs r2, r2, #1
+    bhs 1b
+    mov r1, r2
+    bx lr
+
+apWalkKeys:
+    .byte 0x10, 0x80, 0x20, 0x40 // right, down, left, up
+#endif
 
 // Into the arm7 shadow's code (ShadowPatchCode7.s), version 3: r0 = 0 stops
 // the timers whose reload it knows, 4 starts them again from their counts (r1

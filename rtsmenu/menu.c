@@ -375,9 +375,9 @@ static int saveState(void* block)
     return 1;
 }
 
-// Asks for A once more, then loads. Returns 1 when the game should resume
-// from the loaded state; sets *broken when it can only exit.
-static int loadState(void* block, int* broken, int check)
+// Asks for A once more (unless confirm is 0), then loads. Returns 1 when the
+// game should resume from the loaded state; sets *broken when it can only exit.
+static int loadState(void* block, int* broken, int check, int confirm)
 {
     *broken = 0;
     const char* problem = stateCheck(block);
@@ -386,14 +386,17 @@ static int loadState(void* block, int* broken, int check)
         drawProblem("Can't load: ", problem);
         return 0;
     }
-    drawStatus("A: load slot 1, B: cancel", COLOR_TEXT);
-    u16 keys;
-    while (!((keys = keysDown()) & (KEY_A | KEY_B)));
-    waitRelease();
-    if (keys & KEY_B)
+    if (confirm)
     {
-        drawStatus(0, 0);
-        return 0;
+        drawStatus("A: load slot 1, B: cancel", COLOR_TEXT);
+        u16 keys;
+        while (!((keys = keysDown()) & (KEY_A | KEY_B)));
+        waitRelease();
+        if (keys & KEY_B)
+        {
+            drawStatus(0, 0);
+            return 0;
+        }
     }
     drawStatus("Loading state...", COLOR_TEXT);
     drawProgress(0, 1);
@@ -449,6 +452,54 @@ static void testFreeze(void* block, u32 mode)
         drawStatus2(textNumber(line, "Run: ", differ, " parts differ (log)"), COLOR_BAD);
 }
 
+#ifdef RTS_AUTOPILOT
+// The autopilot build: the restore test by itself, one step a freeze. Returns the
+// answer, or 0 for the menu as ever (a freeze by hand while the script plays).
+static u32 autopilot(void* block, volatile rts_info_t* rts)
+{
+    volatile rts_autopilot_t* ap = (volatile rts_autopilot_t*)((u8*)block + RTS_AUTOPILOT_OFFSET);
+    if (!ap->saveFrame)
+        return 0;
+    u32 testMode = rts->testMode;
+    if (testMode && rts->testFrames == 0)
+    {
+        rts->testMode = 0;
+        testFreeze(block, testMode);
+        if (testMode == TEST_REFERENCE)
+        {
+            // the load + compare after the gap: the arm7 freezes the game again
+            ap->step = RTS_AUTOPILOT_LOAD;
+            rts->testFrames = ap->gapFrames ? ap->gapFrames : 1;
+            return RTS_MENU_STATE_RESUME;
+        }
+        ap->step = RTS_AUTOPILOT_DONE;
+        for (int i = 0; i < 60; i++) // a second to read it, for whoever watches
+            waitVBlank();
+        return RTS_MENU_STATE_EXIT;
+    }
+    if (ap->step == RTS_AUTOPILOT_SAVE)
+    {
+        drawStatus2("Autopilot: save + reference", COLOR_TEXT);
+        if (!saveState(block))
+            return RTS_MENU_STATE_EXIT;
+        rts->testMode = TEST_REFERENCE;
+        rts->testFrames = TEST_FRAMES;
+        return RTS_MENU_STATE_RESUME;
+    }
+    if (ap->step == RTS_AUTOPILOT_LOAD)
+    {
+        drawStatus2("Autopilot: load + compare", COLOR_TEXT);
+        int broken;
+        if (!loadState(block, &broken, 1, 0))
+            return RTS_MENU_STATE_EXIT;
+        rts->testMode = TEST_COMPARE;
+        rts->testFrames = TEST_FRAMES;
+        return RTS_MENU_STATE_RESUME;
+    }
+    return 0;
+}
+#endif
+
 u32 rtsMain(void* block)
 {
     volatile rts_info_t* rts = (volatile rts_info_t*)((u8*)block + RTS_INFO_OFFSET);
@@ -486,7 +537,13 @@ u32 rtsMain(void* block)
     else if (shadowIntact() == 0)
         drawStatus("Shadow memory taken: basic loads", COLOR_BAD);
 
+    u32 answer = 0;
+#ifdef RTS_AUTOPILOT
+    answer = autopilot(block, rts);
+#endif
     int selected = 0;
+    if (answer)
+        goto leave; // the autopilot's step is done: no menu
     drawItems(selected);
 
     // a test run: its own freeze once the frames are counted down, or the
@@ -505,7 +562,6 @@ u32 rtsMain(void* block)
 
     // the combo is still held
     waitRelease();
-    u32 answer = 0;
     while (!answer)
     {
         u16 keys = keysDown();
@@ -572,7 +628,7 @@ u32 rtsMain(void* block)
                     int test = sItems[selected] == ITEM_TEST_LOAD;
                     waitRelease();
                     int broken;
-                    if (loadState(block, &broken, test))
+                    if (loadState(block, &broken, test, 1))
                     {
                         if (test)
                         {
@@ -601,6 +657,7 @@ u32 rtsMain(void* block)
         waitRelease(); // one step per press, and the game should not see the key
     }
 
+leave:
     giveScreensBack();
     if (answer == RTS_MENU_STATE_RESUME)
     {

@@ -21,6 +21,11 @@ BINDIRS		:=
 # ---------------------------
 
 DEFINES		:= -DLIBTWL_ARM7 -DARM7
+# RTS_AUTOPILOT=1: the autopilot test build (unattended restore tests; tools/rts-harness)
+ifeq ($(RTS_AUTOPILOT),1)
+DEFINES		+= -DRTS_AUTOPILOT
+NAME_SUFFIX	:= _autopilot
+endif
 
 # Libraries
 # ---------
@@ -32,7 +37,7 @@ LIBDIRS		:= $(BLOCKSDS)/libs/libnds \
 # Build artifacts
 # -----------------
 
-NAME		:= picoLoader7
+NAME		:= picoLoader7$(NAME_SUFFIX)
 BUILDDIR	:= build/$(NAME)
 BIN     := $(NAME).bin
 ELF		:= build/$(NAME).elf

@@ -239,6 +239,30 @@ static inline u32 exit_request_calcChecksum(const char (&launcherPath)[256])
     return sum ^ EXIT_REQUEST_CHECKSUM_XOR;
 }
 
+/// @brief The autopilot: unattended restore tests on real hardware (the harness
+///        launcher's /_pico/autolist.txt). The loader fills it at boot from
+///        /_pico/autotest.txt (saveFrame 0: off); the arm7 hook plays a fixed key
+///        script into keys, which the game reads in place of KEYINPUT (its
+///        KEYINPUT literals point here), and freezes the game at saveFrame; the
+///        menu then runs save + reference, load + compare and exits by itself.
+///        In the shared page the arm9 reads uncached, after the exit request block.
+struct rts_autopilot_t
+{
+    u16 keys;       // block + 0x170: KEYINPUT as the game sees it (live keys and the script's)
+    u16 keycnt;     // block + 0x172: what a KEYCNT read through the same literal gets
+    u32 saveFrame;  // block + 0x174: vblanks from the game's start to the test's save; 0 off
+    u32 frame;      // block + 0x178: vblanks so far (the arm7 counts)
+    u16 step;       // block + 0x17C: RTS_AUTOPILOT_*
+    u16 gapFrames;  // block + 0x17E: from the reference to the load + compare
+};
+static_assert(sizeof(rts_autopilot_t) == 0x10);
+#define RTS_AUTOPILOT_PLAY          0 // keys from the script, then the freeze at saveFrame
+#define RTS_AUTOPILOT_SAVE          1 // frozen at saveFrame: the menu saves (test: save + reference)
+#define RTS_AUTOPILOT_LOAD          2 // frozen after the gap: the menu loads (test: load + compare)
+#define RTS_AUTOPILOT_DONE          3 // compared: the menu exits to the launcher
+#define RTS_AUTOPILOT_PATH          "/_pico/autotest.txt" // frame=N, gap=N; read and removed at boot
+#define RTS_AUTOPILOT_OFFSET        0x170 // from the exit request block
+
 //0x02FFC000: 16KB
 struct shared_memory_twl_t
 {
@@ -254,7 +278,8 @@ struct shared_memory_twl_t
     u8 twlRomHeader[0x1000];
     u8 sharedArena[0x680];
     exit_request_block_t exitRequest;
-    u8 gap3790[0x180 - sizeof(exit_request_block_t)];
+    rts_autopilot_t autopilot; // right after it: block + 0x170
+
     shared_memory_ntr_t ntrSharedMem;
 };
 

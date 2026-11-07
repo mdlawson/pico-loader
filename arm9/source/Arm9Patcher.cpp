@@ -71,6 +71,46 @@ static bool hasNandSave(u32 gameCode)
     }
 }
 
+#ifdef RTS_AUTOPILOT
+/// @brief The autopilot build: every literal pool word 0x04000130 (KEYINPUT) that a
+///        pc-relative load reads, arm or thumb, in the decompressed arm9 (its
+///        autoloads still in place), goes to keys instead, so the game reads the
+///        autopilot's keys. (A KEYCNT access through the same base lands on the
+///        word's other half.) Overlays keep theirs.
+static void redirectKeyInput(u32 start, u32 size, u32 keys)
+{
+    u32 end = start + (size & ~3u);
+    u32 count = 0;
+    for (u32 a = (start + 3) & ~3u; a < end; a += 4)
+    {
+        if (*(const u32*)a != 0x04000130)
+            continue;
+        bool loaded = false;
+        // ldr rX, [pc, #+imm] (arm, up to 4 KB before) / ldr rX, [pc, #imm] (thumb, up to 1 KB)
+        for (u32 at = a >= start + 0x1000 ? a - 0x1000 : start; at < a && !loaded; at += 2)
+        {
+            if ((at & 3) == 0)
+            {
+                u32 op = *(const u32*)at;
+                if ((op & 0x0F7F0000) == 0x051F0000)
+                {
+                    u32 imm = op & 0xFFF;
+                    loaded = (op & (1 << 23) ? at + 8 + imm : at + 8 - imm) == a;
+                }
+            }
+            u16 h = *(const u16*)at;
+            if (!loaded && (h & 0xF800) == 0x4800 && a - at <= 0x400)
+                loaded = ((at + 4) & ~3u) + (h & 0xFF) * 4 == a;
+        }
+        if (!loaded)
+            continue;
+        *(u32*)a = keys;
+        count++;
+    }
+    LOG_DEBUG("Autopilot: %u KEYINPUT literals to 0x%x\n", count, keys);
+}
+#endif
+
 Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderPlatform, const ApListEntry* apListEntry,
     bool isCloneBootRom, bool runInDSiMode, const loader_info_t* loaderInfo) const
 {
@@ -299,6 +339,14 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
     {
         ErrorDisplay().PrintError("Failed to apply arm9 patches.");
     }
+
+#ifdef RTS_AUTOPILOT
+    // the autopilot build: the game reads the autopilot's keys where it read KEYINPUT
+    if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !runInDSiMode
+        && TWL_SHARED_MEMORY->autopilot.saveFrame != 0)
+        redirectKeyInput(romHeader->arm9LoadAddress, arm9Size,
+            exitComboPatch->GetBlockAddress() + RTS_AUTOPILOT_OFFSET);
+#endif
 
 #ifndef RTS_CENSUS
     // the display register shadow for the rts, put in once the arm7's arena is known

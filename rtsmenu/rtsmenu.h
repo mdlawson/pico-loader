@@ -66,6 +66,22 @@ typedef struct
 #define TEST_FRAMES     120
 
 #define RTS_INFO_OFFSET         0x110 // in exit_request_block_t
+
+// The autopilot (common/sharedMemory.h rts_autopilot_t), right after the block.
+typedef struct
+{
+    u16 keys;
+    u16 keycnt;
+    u32 saveFrame;      // 0: off
+    u32 frame;
+    u16 step;           // RTS_AUTOPILOT_*
+    u16 gapFrames;
+} rts_autopilot_t;
+#define RTS_AUTOPILOT_OFFSET    0x170
+#define RTS_AUTOPILOT_PLAY      0
+#define RTS_AUTOPILOT_SAVE      1
+#define RTS_AUTOPILOT_LOAD      2
+#define RTS_AUTOPILOT_DONE      3
 // the cartridge header, at the same distance from the block in both mirrors
 // (0x027FF680 -> 0x027FFE00, 0x02FFF680 -> 0x02FFFE00)
 #define HEADER_FROM_BLOCK       0x780

@@ -18,6 +18,9 @@ public:
 
     bool IsInstalled() const { return _installed != 0; }
 
+    /// @brief The exit request block as the game addresses it (ntr mirror for sdk 2-4).
+    u32 GetBlockAddress() const { return _blockAddress; }
+
     /// @brief Takes the hook back out and puts back what the game had where the
     ///        pieces went. For when the arm7 half could not be installed, so the
     ///        exit could never fire. Must run before the game boots.
