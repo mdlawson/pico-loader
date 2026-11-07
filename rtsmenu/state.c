@@ -52,6 +52,7 @@ static u32 sTimerIf;        // IF's timer bits as the menu found them
 static u32 sLoadTimer[4];
 static u16 sLoadTimerReload[4];
 static u32 sLoadTimerMeasured;
+static u32 sLoadTimerIf;    // the state's IF timer bits: overflows pending when it was saved
 
 static int measureReload(int i, u16* reload)
 {
@@ -110,10 +111,33 @@ static void timerStart(int i, u32 timer, u16 reload)
     t[0] = reload;      // and wraps to the reload
 }
 
+// IF can't be set by a write: an overflow the state had pending is made again by
+// running the timer over from 0xFFFF (with its irq on, so IF gets the bit; IME is
+// off while the menu runs). It is set up again for the game after this.
+static void timerRaiseIf(int i)
+{
+    vu16* t = REG_TMCNT(i);
+    t[1] = 0;
+    t[0] = 0xFFFF;
+    t[1] = 0xC0; // on, irq, every bus cycle
+    for (int n = 0; n < 1000 && !(REG_IF & (8u << i)); n++)
+        ;
+    t[1] = 0;
+}
+
 static void timersLeave(int loaded)
 {
-    // the overflows the measuring caused are not the game's
-    REG_IF = REG_IF & IF_TIMERS & ~sTimerIf & (sTimerMeasured << 3);
+    // A timer irq pending as the game froze is the game's (the freeze comes in an
+    // irq handler, and its timers ran on until the menu stopped them); it fires
+    // as the game goes on. After a load that's the state's, so both ways match.
+    u32 keep = loaded ? sLoadTimerIf : sTimerIf;
+    if (loaded)
+        for (int i = 0; i < 4; i++)
+            if ((keep & (8u << i)) && !(REG_IF & (8u << i)))
+                timerRaiseIf(i);
+    // the overflows the measuring caused are not the game's, nor (after a load) the
+    // running session's
+    REG_IF = REG_IF & IF_TIMERS & ~keep & ((sTimerMeasured << 3) | (loaded ? sTimerIf : 0));
     for (int i = 0; i < 4; i++)
     {
         if (!loaded)
@@ -607,7 +631,7 @@ static void buildHeader(state_header_t* h, void* block)
     memcpy(h->fifo7, &sFifo7[1], 16 * 4);
     memcpy(h->timer9, sTimer, sizeof(sTimer));
     memcpy(h->timerReload9, sTimerReload, sizeof(sTimerReload));
-    h->timerMeasured9 = sTimerMeasured;
+    h->timerMeasured9 = sTimerMeasured | (sTimerIf >> 3) << 8; // bits 8-11: IF's timer bits
     h->mainSize = TWL_MODE ? gMainSize : 0;
 }
 
@@ -1323,6 +1347,7 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
         sLoadTimer[i] = h->version >= 4 ? h->timer9[i] : *(u32*)(__scratch + 0x100 + i * 4);
     memcpy(sLoadTimerReload, h->timerReload9, sizeof(sLoadTimerReload));
     sLoadTimerMeasured = h->version >= 4 ? h->timerMeasured9 & 0xF : 0;
+    sLoadTimerIf = h->version >= 4 ? (h->timerMeasured9 >> 8 & 0xF) << 3 : 0;
     sLoaded = 1;
     // the loaded session's fifo words replace the running one's
     sFifo9[0] = h->fifo9Count <= 16 ? h->fifo9Count : 0;
