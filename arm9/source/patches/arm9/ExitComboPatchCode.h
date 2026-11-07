@@ -11,12 +11,16 @@ extern u32 patch_census_gate_target;
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_check);
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_wait);
 DEFINE_SECTION_SYMBOLS(patch_exitcombo_teardown);
+DEFINE_SECTION_SYMBOLS(patch_exitcombo_vcount);
 
 extern "C" void patch_exitcombo_hook_entry(void);
 extern "C" void patch_exitcombo_check_entry(void);
 extern "C" void patch_exitcombo_wait_entry(void);
 extern "C" void patch_exitcombo_teardown_entry(void);
+extern "C" void patch_exitcombo_vcount_entry(void);
+extern u32 patch_exitcombo_vcount_check_address;
 
+extern u32 patch_exitcombo_hook_first;
 extern u32 patch_exitcombo_hook_block_address;
 extern u32 patch_exitcombo_hook_check_address;
 extern u32 patch_exitcombo_hook_table_address;
@@ -83,12 +87,13 @@ public:
 class ExitComboHookPatchCode : public PatchCode
 {
 public:
+    /// @param vcountEntry The vcount piece, which the hook goes to instead of the check; 0 without one.
     ExitComboHookPatchCode(PatchHeap& patchHeap, u32 blockAddress, const ExitComboCheckPatchCode* check,
-        u32 irqTableAddress, u32 irqReturnAddress)
+        u32 irqTableAddress, u32 irqReturnAddress, u32 vcountEntry)
         : PatchCode(SECTION_START(patch_exitcombo_hook), SECTION_SIZE(patch_exitcombo_hook), patchHeap)
     {
         patch_exitcombo_hook_block_address = blockAddress;
-        patch_exitcombo_hook_check_address = (u32)check->GetEntryFunction();
+        patch_exitcombo_hook_check_address = vcountEntry ? vcountEntry : (u32)check->GetEntryFunction();
         patch_exitcombo_hook_table_address = irqTableAddress;
         patch_exitcombo_hook_return_address = irqReturnAddress;
         patch_exitcombo_hook_census_address = 0;
@@ -104,6 +109,23 @@ public:
     const void* GetEntryFunction() const
     {
         return GetAddressAtTarget((void*)patch_exitcombo_hook_entry);
+    }
+};
+
+/// @brief Optional: lets the hook take the combo on a vcount irq while the vblank
+///        irq is off, and gives it back the irq index.
+class ExitComboVcountPatchCode : public PatchCode
+{
+public:
+    ExitComboVcountPatchCode(PatchHeap& patchHeap, const ExitComboCheckPatchCode* check)
+        : PatchCode(SECTION_START(patch_exitcombo_vcount), SECTION_SIZE(patch_exitcombo_vcount), patchHeap)
+    {
+        patch_exitcombo_vcount_check_address = (u32)check->GetEntryFunction();
+    }
+
+    const void* GetEntryFunction() const
+    {
+        return GetAddressAtTarget((void*)patch_exitcombo_vcount_entry);
     }
 };
 

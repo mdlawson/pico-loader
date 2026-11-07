@@ -1272,9 +1272,28 @@ static void writeRtsConfigText(char* text, bool basic)
     text[RTS_CONFIG_SIZE - 1] = '\n';
 }
 
+/// @brief Games whose save states default to basic mode (no register shadow) when their
+///        mode file doesn't say: the shadow can't work in them. A mode file still chooses.
+static bool rtsDefaultBasic(u32 gameCode)
+{
+    switch (gameCode)
+    {
+        // Animal Crossing: Wild World: the arm9 uses the arm7's main memory arena (its
+        // own heap reaches it), where the shadow's stubs go; it writes over them and runs
+        // into them (found by the harness's library sweep, 2026-11)
+        case GAMECODE("ADME"):
+        case GAMECODE("ADMP"):
+        case GAMECODE("ADMJ"):
+        case GAMECODE("ADMK"):
+            return true;
+        default:
+            return false;
+    }
+}
+
+/// @param basic In: the default, for a file without a mode line. Out: the mode.
 static u32 readRtsConfig(const char* path, bool& basic)
 {
-    basic = false;
     auto file = std::make_unique<FIL>();
     if (f_open(file.get(), path, FA_OPEN_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
     {
@@ -1375,7 +1394,7 @@ void NdsLoader::SetupRtsStateFile()
         rts.testSlotSector[1] = sectors[2];
         rts.logSector = makeContiguousFile(RTS_LOG_PATH, RTS_LOG_SIZE, ' ');
         rts.logSectorCount = rts.logSector ? RTS_LOG_SIZE / 512 : 0;
-        bool basic = false;
+        bool basic = rtsDefaultBasic(_romHeader.gameCode);
         mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s.cfg", code);
         rts.configSector = readRtsConfig(path, basic);
         rts.options = basic ? (RTS_OPTION_BASIC | RTS_OPTION_NEXT_BASIC) : 0;

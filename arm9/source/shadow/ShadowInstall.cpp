@@ -156,6 +156,16 @@ static bool thumbLrDead(u32 site)
         if ((h & 0xFF00) == 0xBD00) return true;
         if ((h & 0xF800) == 0xF000) return true; // a call: lr gets a new value
         if ((h & 0xFC00) == 0x4400 && ((h >> 3) & 0xF) == 14) return false; // reads lr
+        if ((h & 0xFF87) == 0x4700)
+        {
+            // bx rN: a return only as pop {rN} / bx rN (the routine's own push gave it). Any
+            // other is a tail call or a jump that still needs lr: Mario Kart DS has
+            // ldr r0, =io / str r1, [r0] / ldr r3, =routine / bx r3 in a routine that never
+            // pushed lr, and the backward look above found the push of the routine before it.
+            u32 rn = (h >> 3) & 0xF;
+            u32 prev = half(a - 2);
+            return rn < 8 && (prev & 0xFF00) == 0xBC00 && (prev & (1u << rn));
+        }
     }
     return false;
 }

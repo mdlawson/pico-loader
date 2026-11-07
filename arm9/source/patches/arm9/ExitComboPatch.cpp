@@ -101,7 +101,8 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     // Everything this patch takes from the patch heap, in the order it is taken
     // below. It only gets what the mandatory patches left, and all of it or
     // nothing: Alloc halts when nothing fits, so the whole sequence is tried first.
-    const u32 sizes[] =
+    // The vcount piece (index 6) is optional: tried with it first, then without.
+    u32 sizes[] =
     {
         // OSResetSystemPatch::EmitRebootCode
         sizeof(loader_info_t),
@@ -111,18 +112,28 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
         SECTION_SIZE(patch_exitcombo_teardown),
         SECTION_SIZE(patch_exitcombo_wait),
         SECTION_SIZE(patch_exitcombo_check),
+        SECTION_SIZE(patch_exitcombo_vcount),
         SECTION_SIZE(patch_exitcombo_hook),
         sClzEntryWords * 4 // the clz dispatcher's entry piece, last so the others land as before
     };
-    const u32 sizeCount = sizeof(sizes) / sizeof(sizes[0]) - (_clzDispatch ? 0 : 1);
+    u32 sizeCount = sizeof(sizes) / sizeof(sizes[0]) - (_clzDispatch ? 0 : 1);
     u32 first = emitRebootCode ? 0 : 3;
     void* addresses[sizeof(sizes) / sizeof(sizes[0])];
     auto& patchHeap = patchContext.GetPatchHeap();
-    if (!patchHeap.CanAllocInOrder(&sizes[first], sizeCount - first, &addresses[first]))
+    bool withVcount = patchHeap.CanAllocInOrder(&sizes[first], sizeCount - first, &addresses[first]);
+    if (!withVcount)
     {
-        LOG_DEBUG("No room for the exit combo\n");
-        return;
+        // without it: the hook and the clz entry move down one
+        for (u32 i = 6; i + 1 < sizeCount; i++)
+            sizes[i] = sizes[i + 1];
+        sizeCount--;
+        if (!patchHeap.CanAllocInOrder(&sizes[first], sizeCount - first, &addresses[first]))
+        {
+            LOG_DEBUG("No room for the exit combo\n");
+            return;
+        }
     }
+    const u32 hookIndex = withVcount ? 7 : 6;
 
     // The mandatory patches took what they needed already; this takes more of the
     // same gaps, so leave the exit out rather than write over a romhack's code.
@@ -186,8 +197,14 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
             irqReturn = autoload->AdjustInitialToFinal(irqReturn);
         LOG_DEBUG("Irq table 0x%x, return 0x%x\n", irqTable, irqReturn);
     }
+    const ExitComboVcountPatchCode* vcount = nullptr;
+    if (withVcount)
+        vcount = patchCodes.AddUniquePatchCode<ExitComboVcountPatchCode>(patchHeap, check);
+    // the hook's first instruction: tst r0, #0x1D (vblank or vcount) with the vcount
+    // piece, cmp r0, #0 (vblank) without; set in the section before it is copied
+    patch_exitcombo_hook_first = vcount ? 0xE310001D : 0xE3500000;
     auto hook = patchCodes.AddUniquePatchCode<ExitComboHookPatchCode>(patchHeap, blockAddress, check,
-        irqTable, irqReturn);
+        irqTable, irqReturn, vcount ? (u32)vcount->GetEntryFunction() : 0);
 
     LOG_DEBUG("Exit combo hook 0x%p, check 0x%p, wait 0x%p, teardown 0x%p\n", hook->GetEntryFunction(),
         check->GetEntryFunction(), wait->GetEntryFunction(), teardown->GetEntryFunction());
@@ -195,7 +212,8 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     // doing what CanAllocInOrder does. The pieces are copied in anyway, but without
     // the hook nothing reaches them, and what was saved is not what they cover.
     if (teardown->GetEntryFunction() != addresses[3] || wait->GetEntryFunction() != addresses[4] ||
-        check->GetEntryFunction() != addresses[5] || hook->GetEntryFunction() != addresses[6])
+        check->GetEntryFunction() != addresses[5] || hook->GetEntryFunction() != addresses[hookIndex]
+        || (vcount && vcount->GetEntryFunction() != addresses[6]))
     {
         LOG_WARNING("Exit combo pieces not where planned, left out\n");
         delete[] _savedGameWords;
@@ -213,7 +231,7 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     {
         // strne r1, [ip, #4] / bxeq lr / rsb r0, r0, #31 / b hook
         u32* entry = (u32*)patchHeap.Alloc(sClzEntryWords * 4);
-        if (entry != addresses[7])
+        if (entry != addresses[hookIndex + 1])
         {
             LOG_WARNING("Exit combo pieces not where planned, left out\n");
             delete[] _savedGameWords;
@@ -233,6 +251,9 @@ void ExitComboPatch::ApplyPatch(PatchContext& patchContext)
     _patchedAt[1] = jumpTo;
     _hookEntry = jumpTo;
     _installed = 1;
+
+    if (vcount)
+        LOG_DEBUG("Exit combo vcount piece 0x%p\n", vcount->GetEntryFunction());
 
     LOG_DEBUG("Exit combo enabled\n");
 

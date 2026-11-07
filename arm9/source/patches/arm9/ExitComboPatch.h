@@ -45,15 +45,15 @@ private:
     u32 _savedTail[2];
     u32 _hookEntry = 0;
     u32* _savedGameWords = nullptr;
-    u32 _savedRegionAddress[8]; // loader_info_t, both reboot code sections, the four pieces, the clz entry
-    u32 _savedRegionSize[8];
+    u32 _savedRegionAddress[9]; // loader_info_t, both reboot code sections, the pieces (vcount optional), the clz entry
+    u32 _savedRegionSize[9];
     u32 _savedRegionCount = 0;
     u32 _installed = 0;
     u32* _censusLiteral = nullptr;
     u32* _censusGateTarget = nullptr; // in the optional gate piece, nullptr without one
     u32 _censusGateEntry = 0;
     u32 _censusGateAddress = 0;
-    u32 _censusGateSaved[16]; // what the game had where the gate went
+    u32 _censusGateSaved[20]; // what the game had where the gate went
     u32 _blockAddress = 0;
     u32 _twlSdk = 0;
 };

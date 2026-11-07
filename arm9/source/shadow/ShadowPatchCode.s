@@ -332,6 +332,7 @@ shadow_vblank:
     add r4, r4, #32
     b 1b
 9:
+    mov r0, #0 // the vblank's index, for the exit combo's hook
     pop {r4-r8, pc}
 
 // r0 = a group -> r0 = the hash of what its sites hold (fnv-1a by words)

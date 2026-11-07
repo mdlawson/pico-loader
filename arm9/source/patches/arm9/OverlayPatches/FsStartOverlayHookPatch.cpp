@@ -33,6 +33,19 @@ bool FsStartOverlayHookPatch::FindPatchTarget(PatchContext& patchContext)
         if (_fsStartOverlay)
         {
             _fsStartOverlay -= 3;
+            // bl DC_FlushRange; ldr rX,[r5,#0x10]: the sinit pointer's register is the
+            // compiler's choice here too (r4 mostly, r6 in Tetris DS)
+            u32 load = _fsStartOverlay[0xB4 / 4];
+            if ((_fsStartOverlay[0xB0 / 4] >> 24) == 0xEB && (load & 0xFFFF0FFFu) == 0xE5950010u
+                && ((load >> 12) & 0xF) < 8)
+            {
+                _sinitRd = ((load >> 12) & 0xF) + 1;
+            }
+            else
+            {
+                LOG_DEBUG("FS_StartOverlay (sdk 4) not as expected\n");
+                _fsStartOverlay = nullptr;
+            }
         }
         else if ((_fsStartOverlay = patchContext.FindPattern32(sFSStartOverlayPatternSdk3, sizeof(sFSStartOverlayPatternSdk3))) != nullptr)
         {
@@ -44,6 +57,7 @@ bool FsStartOverlayHookPatch::FindPatchTarget(PatchContext& patchContext)
                 && ((load >> 12) & 0xF) < 8)
             {
                 _sdk3Rd = ((load >> 12) & 0xF) + 1;
+                _sinitRd = _sdk3Rd;
             }
             else
             {
@@ -156,11 +170,11 @@ void FsStartOverlayHookPatch::ApplyPatch(PatchContext& patchContext)
 
     u32 entryAddress = (u32)&fsstartoverlayhook_entry - (u32)__fsstartoverlayhook_start + (u32)patch1Address;
     memcpy(patch1Address, __fsstartoverlayhook_start, patch1Size);
-    if (_sdk3Rd)
+    if (_sinitRd)
     {
         // the hook's last load (ldr r4, [r5, #0x10]) into the register the game uses
         u16* load = (u16*)((u8*)patch1Address + ((u32)&fsstartoverlayhook_sinitLoad - (u32)__fsstartoverlayhook_start));
-        *load = (*load & ~7) | (_sdk3Rd - 1);
+        *load = (*load & ~7) | (_sinitRd - 1);
     }
 
     if (_thumb)

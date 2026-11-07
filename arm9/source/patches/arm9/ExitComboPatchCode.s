@@ -19,19 +19,24 @@
 // Reached through ldr pc from the first instruction of the SDK irq dispatcher
 // tail, with r0 = irq index. Runs on every irq, so it stays short: only a vblank
 // with the arm7's combo magic set goes on to the check piece, which returns here
-// with r0 = 0 whenever the game goes on.
+// with r0 = 0 whenever the game goes on. With the vcount piece in (below), the
+// loader makes the first instruction tst r0, #0x1D, so index 2 comes in as well,
+// and the check literal leads to that piece, which gives the index back.
 .section "patch_exitcombo_hook", "ax"
 .global patch_exitcombo_hook_entry
 .type patch_exitcombo_hook_entry, %function
 patch_exitcombo_hook_entry:
-    cmp r0, #0 // irq index 0 = vblank
+.global patch_exitcombo_hook_first
+patch_exitcombo_hook_first: // the loader sets this instruction, see above
+    cmp r0, #0 // irq index 0 = vblank (tst r0, #0x1D with the vcount piece: 0 or 2)
     bne 1f
-    // the register-write census, when the loader put one in (it keeps r4-r11)
-    // (through the census gate below; the hook stays as small as it was)
-    ldr r12, patch_exitcombo_hook_census_address
+    // the vblank call (the shadow's, or the register-write census through the
+    // census gate below), when the loader put one in: keeps r4-r11, gives back r0 = 0.
+    // Not on a vcount (r0 = 2): r12 = 0.
+    subs r12, r0, #2
+    ldrne r12, patch_exitcombo_hook_census_address
     cmp r12, #0
     blxne r12
-    mov r0, #0
     ldr r1, patch_exitcombo_hook_block_address
     mcr p15, 0, r1, c7, c6, 1 // invalidate the line, the arm7 has no cache
     ldr r2, [r1, #0x0C] // exit_request_block_t::comboMagic
@@ -232,11 +237,43 @@ patch_census_gate_entry:
     mrc p15, 0, r2, c3, c0, 0 // not buffered
     bic r2, r2, #4
     mcr p15, 0, r2, c3, c0, 0
-    ldr pc, patch_census_gate_target
+    push {lr}
+    ldr r12, patch_census_gate_target
+    blx r12
+    mov r0, #0 // the vblank's index, for the hook
+    pop {pc}
 gateStackRegion:
     .word 0x02FFF017 // base 02FFF000h, 4 KB, enabled
 .global patch_census_gate_target
 patch_census_gate_target:
+    .word 0
+
+// ---------------------------------------------------------------- vcount
+// Optional, when the patch heap has room for it after the rest: a game may turn the
+// vblank irq off and keep its frames with a vcount one (Mario & Luigi: Bowser's
+// Inside Story, once in play), and then never gets a vblank for the hook. With this
+// piece in, the hook comes here instead of the check, for a vblank or a vcount
+// (r0 = 0 or 2; r1 = block, r2 = the combo magic, lr = back into the hook). A vcount
+// goes on only while the vblank irq is off, so other games are as they were. The
+// check and wait give back r0 = 0: this gives the hook the index it came with.
+.section "patch_exitcombo_vcount", "ax"
+.global patch_exitcombo_vcount_entry
+.type patch_exitcombo_vcount_entry, %function
+patch_exitcombo_vcount_entry:
+    cmp r0, #0
+    beq 1f
+    mov r3, #0x04000000
+    ldr r3, [r3, #0x210] // IE
+    tst r3, #1
+    bxne lr // vblank's on: it takes the combo
+1:
+    push {r0, lr}
+    ldr r12, patch_exitcombo_vcount_check_address
+    blx r12
+    pop {r0, pc}
+
+.global patch_exitcombo_vcount_check_address
+patch_exitcombo_vcount_check_address:
     .word 0
 
 .end

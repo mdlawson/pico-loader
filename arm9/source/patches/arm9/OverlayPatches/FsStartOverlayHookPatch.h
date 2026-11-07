@@ -13,4 +13,5 @@ private:
     u16 _thumb = false;
     u16 _hybrid = false;
     u32 _sdk3Rd = 0; // sdk 3: the sinit pointer's register + 1 (flush a word later), 0 otherwise
+    u32 _sinitRd = 0; // arm: the register the sinit pointer is loaded into + 1, 0 to leave the hook's r4
 };
