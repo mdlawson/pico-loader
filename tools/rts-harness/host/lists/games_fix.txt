@@ -1,0 +1,4 @@
+gsdd|gsdd/Golden Sun - Dark Dawn (USA, Australia) (En,Es).nds|1500:300|
+mph|mph/Metroid Prime - Hunters (USA) (Rev 1).nds|1500:300|
+nsmb|nsmb/New Super Mario Bros. (USA).nds|1500:300|
+dq9|dq9/Dragon Quest IX - Sentinels of the Starry Skies (USA) (En,Fr,Es).nds|1500:300|

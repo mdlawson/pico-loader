@@ -1,0 +1,20 @@
+sm64|sm64/Super Mario 64 DS (USA).nds|1500:300|
+aw|aw/Advance Wars - Dual Strike (USA, Australia).nds|1500:300|
+ph|ph/Legend of Zelda, The - Phantom Hourglass (USA) (En,Fr,Es).nds|1500:300|
+ml|ml/Mario & Luigi - Partners in Time (USA) (Rev 1).nds|1500:300|
+ct|ct/Chrono Trigger (USA) (En,Fr).nds|1500:300|
+pkd|pkd/Pokemon - Diamond Version (USA) (Rev 5).nds|1500:300|
+layton|layton/Professor Layton and the Curious Village (USA, Australia).nds|1500:300|
+cv|cv/Castlevania - Dawn of Sorrow (USA).nds|1500:300|
+rs|rs/Dragon Quest Heroes - Rocket Slime (USA).nds|1500:300|
+rs3950|rs/Dragon Quest Heroes - Rocket Slime (USA).nds|3950:300|--key 1400:START:4 --key 1500:A:4 --key 1700:A:4 --key 1900:A:4 --key 2200:START:4 --key 2300:A:4 --key 2500:A:4 --key 2650:A:4 --key 2800:A:4 --key 2950:A:4 --key 3100:A:4 --key 3250:A:4 --key 3400:A:4 --key 3550:A:4 --key 3700:A:4 --key 3850:A:4
+rs4150|rs/Dragon Quest Heroes - Rocket Slime (USA).nds|4150:300|--key 1400:START:4 --key 1500:A:4 --key 1700:A:4 --key 1900:A:4 --key 2200:START:4 --key 2300:A:4 --key 2500:A:4 --key 2650:A:4 --key 2800:A:4 --key 2950:A:4 --key 3100:A:4 --key 3250:A:4 --key 3400:A:4 --key 3550:A:4 --key 3700:A:4 --key 3850:A:4 --key 4000:A:4
+rs4750|rs/Dragon Quest Heroes - Rocket Slime (USA).nds|4750:300|--key 1400:START:4 --key 1500:A:4 --key 1700:A:4 --key 1900:A:4 --key 2200:START:4 --key 2300:A:4 --key 2500:A:4 --key 2650:A:4 --key 2800:A:4 --key 2950:A:4 --key 3100:A:4 --key 3250:A:4 --key 3400:A:4 --key 3550:A:4 --key 3700:A:4 --key 3850:A:4 --key 4000:A:4 --key 4150:A:4 --key 4300:A:4 --key 4450:A:4 --key 4600:A:4
+eba|eba/Elite Beat Agents (USA).nds|1500:300|
+gsdd|gsdd/Golden Sun - Dark Dawn (USA, Australia) (En,Es).nds|1500:300|
+gta|gta/Grand Theft Auto - Chinatown Wars (USA) (En,Fr,De,Es,It).nds|1500:300|
+st|st/Legend of Zelda, The - Spirit Tracks (USA) (En,Fr,Es) (Rev 1).nds|1500:300|
+mph|mph/Metroid Prime - Hunters (USA) (Rev 1).nds|1500:300|
+nsmb|nsmb/New Super Mario Bros. (USA).nds|1500:300|
+diy|diy/WarioWare - D.I.Y. (USA).nds|1500:300|
+dq9|dq9/Dragon Quest IX - Sentinels of the Starry Skies (USA) (En,Fr,Es).nds|1500:300|

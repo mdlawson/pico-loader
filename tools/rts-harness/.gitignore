@@ -1,0 +1,8 @@
+host/dshost
+host/dshost.new
+host/dshost.prof*
+host/out/
+launcher/build/
+__pycache__/
+*.img
+*.img.idx

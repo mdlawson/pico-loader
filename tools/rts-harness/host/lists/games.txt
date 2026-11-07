@@ -1,0 +1,9 @@
+sm64|sm64/Super Mario 64 DS (USA).nds|1500:300|
+aw|aw/Advance Wars - Dual Strike (USA, Australia).nds|1500:300|
+ph|ph/Legend of Zelda, The - Phantom Hourglass (USA) (En,Fr,Es).nds|1500:300|
+ml|ml/Mario & Luigi - Partners in Time (USA) (Rev 1).nds|1500:300|
+ct|ct/Chrono Trigger (USA) (En,Fr).nds|1500:300|
+pkd|pkd/Pokemon - Diamond Version (USA) (Rev 5).nds|1500:300|
+layton|layton/Professor Layton and the Curious Village (USA, Australia).nds|1500:300|
+cv|cv/Castlevania - Dawn of Sorrow (USA).nds|1500:300|
+rs|rs/Dragon Quest Heroes - Rocket Slime (USA).nds|1500:300|

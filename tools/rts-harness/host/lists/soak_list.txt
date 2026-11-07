@@ -1,0 +1,18 @@
+sm64|sm64/Super Mario 64 DS (USA).nds|pico_v6
+sm64|sm64/Super Mario 64 DS (USA).nds|pico_noshadow
+aw|aw/Advance Wars - Dual Strike (USA, Australia).nds|pico_v6
+aw|aw/Advance Wars - Dual Strike (USA, Australia).nds|pico_noshadow
+ph|ph/Legend of Zelda, The - Phantom Hourglass (USA) (En,Fr,Es).nds|pico_v6
+ph|ph/Legend of Zelda, The - Phantom Hourglass (USA) (En,Fr,Es).nds|pico_noshadow
+ml|ml/Mario & Luigi - Partners in Time (USA) (Rev 1).nds|pico_v6
+ml|ml/Mario & Luigi - Partners in Time (USA) (Rev 1).nds|pico_noshadow
+ct|ct/Chrono Trigger (USA) (En,Fr).nds|pico_v6
+ct|ct/Chrono Trigger (USA) (En,Fr).nds|pico_noshadow
+pkd|pkd/Pokemon - Diamond Version (USA) (Rev 5).nds|pico_v6
+pkd|pkd/Pokemon - Diamond Version (USA) (Rev 5).nds|pico_noshadow
+layton|layton/Professor Layton and the Curious Village (USA, Australia).nds|pico_v6
+layton|layton/Professor Layton and the Curious Village (USA, Australia).nds|pico_noshadow
+cv|cv/Castlevania - Dawn of Sorrow (USA).nds|pico_v6
+cv|cv/Castlevania - Dawn of Sorrow (USA).nds|pico_noshadow
+rs|rs/Dragon Quest Heroes - Rocket Slime (USA).nds|pico_v6
+rs|rs/Dragon Quest Heroes - Rocket Slime (USA).nds|pico_noshadow

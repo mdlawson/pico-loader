@@ -1,0 +1,450 @@
+From c923283a2909524f8566bf5e1538c6def05e81fb Mon Sep 17 00:00:00 2001
+From: Claude <claude@mdlawson.com>
+Date: Sat, 7 Nov 2026 08:24:12 +0000
+Subject: [PATCH 3/3] Test harness: write watch, pc history rings and pu map
+ sets
+
+- MELON_TRACE_MEM=start[:end] logs main memory and io writes from either
+  cpu in DSi mode, with the writer's pc.
+- A history of the last 4096 pcs for each cpu, which the host dumps.
+- Two protection unit map sets (on/off), swapped instead of rebuilt.
+- DSpico cart, io write hooks and other harness pieces carried along.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01CwsEkqb8ecKxcrBh97pUFG
+---
+ src/ARM.cpp                  |  8 +++++
+ src/ARM.h                    | 18 ++++++++--
+ src/CP15.cpp                 | 70 +++++++++++++++++++++++++++++++++---
+ src/DMA.cpp                  |  1 +
+ src/DSi.cpp                  |  6 ++++
+ src/NDS.cpp                  | 14 ++++++++
+ src/NDS.h                    |  4 +++
+ src/NDSCart/CartHomebrew.cpp | 14 ++++++++
+ src/NDSCart/CartHomebrew.h   |  1 +
+ src/SPU.h                    |  4 +++
+ 10 files changed, 133 insertions(+), 7 deletions(-)
+
+diff --git a/src/ARM.cpp b/src/ARM.cpp
+index 3937a99..2e77568 100644
+--- a/src/ARM.cpp
++++ b/src/ARM.cpp
+@@ -570,8 +570,12 @@ void ARMv5::PrefetchAbort()
+     JumpTo(ExceptionBase + 0x0C);
+ }
+ 
++u32 gHarnessAbortRing[64][3]; u32 gHarnessAbortN;
++u32 gHarness7Ring[4096]; u32 gHarness7N; int gHarness7Arm;
++u32 gHarness9Ring[4096]; u32 gHarness9N; int gHarness9Arm;
+ void ARMv5::DataAbort()
+ {
++    { u32* e = gHarnessAbortRing[gHarnessAbortN++ & 63]; e[0] = R[15]; e[1] = CPSR; e[2] = R[13]; }
+     Log(LogLevel::Warn, "ARM9: data abort (%08X)\n", R[15]);
+ 
+     u32 oldcpsr = CPSR;
+@@ -662,6 +666,7 @@ void ARMv5::Execute()
+                 if constexpr (mode == CPUExecuteMode::InterpreterGDB)
+                     GdbCheckC();
+ 
++                if (gHarness9Arm != 2) { gHarness9Ring[gHarness9N++ & 4095] = R[15] - 4 + 1; if (gHarness9Arm == 1 && R[15] - 4 == 0x01000100) gHarness9Arm = 2; }
+                 // prefetch
+                 R[15] += 2;
+                 CurInstr = NextInstr[0];
+@@ -678,6 +683,7 @@ void ARMv5::Execute()
+                 if constexpr (mode == CPUExecuteMode::InterpreterGDB)
+                     GdbCheckC();
+ 
++                if (gHarness9Arm != 2) { gHarness9Ring[gHarness9N++ & 4095] = R[15] - 8; if (gHarness9Arm == 1 && R[15] - 8 == 0x01000100) gHarness9Arm = 2; }
+                 // prefetch
+                 R[15] += 4;
+                 CurInstr = NextInstr[0];
+@@ -801,6 +807,7 @@ void ARMv4::Execute()
+                 if constexpr (mode == CPUExecuteMode::InterpreterGDB)
+                     GdbCheckC();
+ 
++                if (gHarness7Arm != 2) { gHarness7Ring[gHarness7N++ & 4095] = R[15] - 4 + 1; if (gHarness7Arm == 1 && R[15] >= 0xEA0 && R[15] < 0xEC8) gHarness7Arm = 2; }
+                 // prefetch
+                 R[15] += 2;
+                 CurInstr = NextInstr[0];
+@@ -816,6 +823,7 @@ void ARMv4::Execute()
+                 if constexpr (mode == CPUExecuteMode::InterpreterGDB)
+                     GdbCheckC();
+ 
++                if (gHarness7Arm != 2) { gHarness7Ring[gHarness7N++ & 4095] = R[15] - 8; if (gHarness7Arm == 1 && R[15] >= 0xEA0 && R[15] < 0xEC8) gHarness7Arm = 2; }
+                 // prefetch
+                 R[15] += 4;
+                 CurInstr = NextInstr[0];
+diff --git a/src/ARM.h b/src/ARM.h
+index 88f970b..af61dd7 100644
+--- a/src/ARM.h
++++ b/src/ARM.h
+@@ -311,6 +311,7 @@ public:
+     void UpdateITCMSetting();
+ 
+     void UpdatePURegion(u32 n);
++    void UpdatePURegionOnly(u32 n, u32 clipLo = 0, u32 clipHi = 0x100000);
+     void UpdatePURegions(bool update_all);
+ 
+     u32 RandomLineIndex();
+@@ -352,15 +353,26 @@ public:
+     u32 PU_Region[8];
+ 
+     // 0=dataR 1=dataW 2=codeR 4=datacache 5=datawrite 6=codecache
+-    u8 PU_PrivMap[0x100000];
+-    u8 PU_UserMap[0x100000];
++    // harness: two sets of maps, protection on (0) and off (1), so turning the
++    // unit off and on again (each data abort through the bios) swaps pointers
++    // instead of rebuilding a million entries
++    u8 PU_MapBuf[2][2][0x100000];
++    u8 MemTimingsBuf[2][0x100000][4];
++    u64 PU_SetKey[2] = {0, 0};
++    bool PU_SetValid[2] = {false, false};
++    int PU_Set = 0;
++    u64 PUKey() const;
++    void PUSelectSet(int set);
++    void UpdateRegionTimingsOnly(u32 addrstart, u32 addrend);
++    u8* PU_PrivMap = PU_MapBuf[0][0];
++    u8* PU_UserMap = PU_MapBuf[0][1];
+ 
+     // games operate under system mode, generally
+     //#define PU_Map PU_PrivMap
+     u8* PU_Map;
+ 
+     // code/16N/32N/32S
+-    u8 MemTimings[0x100000][4];
++    u8 (*MemTimings)[4] = MemTimingsBuf[0];
+ 
+     u8* CurICacheLine;
+ 
+diff --git a/src/CP15.cpp b/src/CP15.cpp
+index 443d470..a8146d5 100644
+--- a/src/CP15.cpp
++++ b/src/CP15.cpp
+@@ -151,6 +151,27 @@ void ARMv5::UpdateITCMSetting()
+ // covers updates to a specific PU region's cache/etc settings
+ // (not to the region range/enabled status)
+ void ARMv5::UpdatePURegion(u32 n)
++{
++    if (!(CP15Control & 1)) { PU_SetValid[0] = false; return; }
++    PU_SetKey[0] = PUKey();
++    // a higher region wins where regions overlap: put back the ones above n
++    // over what n just wrote
++    // only region n's own range can change: within it, n and then the
++    // regions above it that overlap
++    u32 rgn = PU_Region[n];
++    u32 lo = 0, hi = 0x100000;
++    if (rgn & 1)
++    {
++        u32 size = std::max((int)((rgn>>1) & 0x1F) - 11, 0);
++        lo = ((rgn >> 12) >> size) << size;
++        hi = lo + (1u << size);
++    }
++    UpdatePURegionOnly(n, lo, hi);
++    for (u32 i = n + 1; i < 8; i++)
++        UpdatePURegionOnly(i, lo, hi);
++}
++
++void ARMv5::UpdatePURegionOnly(u32 n, u32 clipLo, u32 clipHi)
+ {
+     if (!(CP15Control & (1<<0)))
+         return;
+@@ -252,17 +273,52 @@ void ARMv5::UpdatePURegion(u32 n)
+         PU_CodeRW
+     );
+ 
++    start = std::max(start, clipLo);
++    end = std::min(end, clipHi);
++    if (start >= end)
++        return;
+     for (u32 i = start; i < end; i++)
+     {
+         PU_UserMap[i] = usermask;
+         PU_PrivMap[i] = privmask;
+     }
+ 
+-    UpdateRegionTimings(start, end);
++    UpdateRegionTimingsOnly(start, end);
++}
++
++u64 ARMv5::PUKey() const
++{
++    u64 h = 1469598103934665603ull;
++    auto mix = [&](u64 v) { h = (h ^ v) * 1099511628211ull; };
++    for (int i = 0; i < 8; i++) mix(PU_Region[i]);
++    mix(PU_DataRW); mix(PU_CodeRW); mix(PU_DataCacheable); mix(PU_DataCacheWrite); mix(PU_CodeCacheable);
++    mix(CP15Control & 0x1005);
++    return h;
++}
++
++void ARMv5::PUSelectSet(int set)
++{
++    PU_Set = set;
++    PU_PrivMap = PU_MapBuf[set][0];
++    PU_UserMap = PU_MapBuf[set][1];
++    MemTimings = MemTimingsBuf[set];
++    PU_Map = ((CPSR & 0x1F) == 0x10) ? PU_UserMap : PU_PrivMap;
+ }
+ 
+ void ARMv5::UpdatePURegions(bool update_all)
+ {
++    {
++        int set = (CP15Control & 1) ? 0 : 1;
++        u64 key = PUKey();
++        bool swapped = set != PU_Set;
++        PUSelectSet(set);
++        if (PU_SetValid[set] && PU_SetKey[set] == key)
++            return;
++        if (swapped || !PU_SetValid[set])
++            update_all = true;
++        PU_SetValid[set] = true;
++        PU_SetKey[set] = key;
++    }
+     if (!(CP15Control & (1<<0)))
+     {
+         // PU disabled
+@@ -274,7 +330,7 @@ void ARMv5::UpdatePURegions(bool update_all)
+         memset(PU_UserMap, mask, 0x100000);
+         memset(PU_PrivMap, mask, 0x100000);
+ 
+-        UpdateRegionTimings(0x00000, 0x100000);
++        UpdateRegionTimingsOnly(0x00000, 0x100000);
+         return;
+     }
+ 
+@@ -286,17 +342,23 @@ void ARMv5::UpdatePURegions(bool update_all)
+ 
+     for (int n = 0; n < 8; n++)
+     {
+-        UpdatePURegion(n);
++        UpdatePURegionOnly(n);
+     }
+ 
+     // TODO: this is way unoptimized
+     // should be okay unless the game keeps changing shit, tho
+-    if (update_all) UpdateRegionTimings(0x00000, 0x100000);
++    if (update_all) UpdateRegionTimingsOnly(0x00000, 0x100000);
+ 
+     // TODO: throw exception if the region we're running in has become non-executable, I guess
+ }
+ 
+ void ARMv5::UpdateRegionTimings(u32 addrstart, u32 addrend)
++{
++    PU_SetValid[PU_Set ^ 1] = false; // the other set's timings are stale now
++    UpdateRegionTimingsOnly(addrstart, addrend);
++}
++
++void ARMv5::UpdateRegionTimingsOnly(u32 addrstart, u32 addrend)
+ {
+     for (u32 i = addrstart; i < addrend; i++)
+     {
+diff --git a/src/DMA.cpp b/src/DMA.cpp
+index b154273..92cda1f 100644
+--- a/src/DMA.cpp
++++ b/src/DMA.cpp
+@@ -703,6 +703,7 @@ void DMA::Run7()
+ 
+ void DMA::Run()
+ {
++    struct InDMA { InDMA() { gHarnessInDMA++; } ~InDMA() { gHarnessInDMA--; } } inDma;
+     if (!Running) return;
+     if (CPU == 0) return Run9();
+     else          return Run7();
+diff --git a/src/DSi.cpp b/src/DSi.cpp
+index 4a3f15a..b185b1c 100644
+--- a/src/DSi.cpp
++++ b/src/DSi.cpp
+@@ -1658,6 +1658,7 @@ u32 DSi::ARM9Read32(u32 addr)
+ 
+ void DSi::ARM9Write8(u32 addr, u8 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_MEM"); t) { static u32 ta = strtoul(t, nullptr, 16); static u32 tb = strchr(t, ':') ? strtoul(strchr(t, ':') + 1, nullptr, 16) : ta + 4; static int tn = 0; if ((addr & ~3u) >= (ta & ~3u) && addr < tb && tn++ < 4000000) fprintf(stderr, "mem9 w8 %08X=%X pc %08X\n", addr, (u32)val, ARM9.R[15]); }
+     assert(ConsoleType == 1);
+     switch (addr & 0xFF000000)
+     {
+@@ -1753,6 +1754,7 @@ void DSi::ARM9Write8(u32 addr, u8 val)
+ 
+ void DSi::ARM9Write16(u32 addr, u16 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_MEM"); t) { static u32 ta = strtoul(t, nullptr, 16); static u32 tb = strchr(t, ':') ? strtoul(strchr(t, ':') + 1, nullptr, 16) : ta + 4; static int tn = 0; if ((addr & ~3u) >= (ta & ~3u) && addr < tb && tn++ < 4000000) fprintf(stderr, "mem9 w16 %08X=%X pc %08X\n", addr, (u32)val, ARM9.R[15]); }
+     assert(ConsoleType == 1);
+     addr &= ~0x1;
+ 
+@@ -1838,6 +1840,7 @@ void DSi::ARM9Write16(u32 addr, u16 val)
+ 
+ void DSi::ARM9Write32(u32 addr, u32 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_MEM"); t) { static u32 ta = strtoul(t, nullptr, 16); static u32 tb = strchr(t, ':') ? strtoul(strchr(t, ':') + 1, nullptr, 16) : ta + 4; static int tn = 0; if ((addr & ~3u) >= (ta & ~3u) && addr < tb && tn++ < 4000000) fprintf(stderr, "mem9 w32 %08X=%X pc %08X\n", addr, (u32)val, ARM9.R[15]); }
+     assert(ConsoleType == 1);
+     addr &= ~0x3;
+ 
+@@ -2138,6 +2141,7 @@ u32 DSi::ARM7Read32(u32 addr)
+ 
+ void DSi::ARM7Write8(u32 addr, u8 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_MEM"); t) { static u32 ta = strtoul(t, nullptr, 16); static u32 tb = strchr(t, ':') ? strtoul(strchr(t, ':') + 1, nullptr, 16) : ta + 4; static int tn = 0; if ((addr & ~3u) >= (ta & ~3u) && addr < tb && tn++ < 4000000) fprintf(stderr, "mem7 w8 %08X=%X pc %08X\n", addr, (u32)val, ARM7.R[15]); }
+     assert(ConsoleType == 1);
+     switch (addr & 0xFF800000)
+     {
+@@ -2226,6 +2230,7 @@ void DSi::ARM7Write8(u32 addr, u8 val)
+ 
+ void DSi::ARM7Write16(u32 addr, u16 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_MEM"); t) { static u32 ta = strtoul(t, nullptr, 16); static u32 tb = strchr(t, ':') ? strtoul(strchr(t, ':') + 1, nullptr, 16) : ta + 4; static int tn = 0; if ((addr & ~3u) >= (ta & ~3u) && addr < tb && tn++ < 4000000) fprintf(stderr, "mem7 w16 %08X=%X pc %08X\n", addr, (u32)val, ARM7.R[15]); }
+     assert(ConsoleType == 1);
+     addr &= ~0x1;
+ 
+@@ -2316,6 +2321,7 @@ void DSi::ARM7Write16(u32 addr, u16 val)
+ 
+ void DSi::ARM7Write32(u32 addr, u32 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_MEM"); t) { static u32 ta = strtoul(t, nullptr, 16); static u32 tb = strchr(t, ':') ? strtoul(strchr(t, ':') + 1, nullptr, 16) : ta + 4; static int tn = 0; if ((addr & ~3u) >= (ta & ~3u) && addr < tb && tn++ < 4000000) fprintf(stderr, "mem7 w32 %08X=%X pc %08X\n", addr, (u32)val, ARM7.R[15]); }
+     assert(ConsoleType == 1);
+     addr &= ~0x3;
+ 
+diff --git a/src/NDS.cpp b/src/NDS.cpp
+index c6dc85f..8beb579 100644
+--- a/src/NDS.cpp
++++ b/src/NDS.cpp
+@@ -1,3 +1,4 @@
++#include <cstdlib>
+ /*
+     Copyright 2016-2026 melonDS team
+ 
+@@ -3150,8 +3151,14 @@ u32 NDS::ARM9IORead32(u32 addr)
+     return 0;
+ }
+ 
++void (*gHarnessIOWrite)(u32, u32, int) = nullptr;
++void (*gHarnessIO7Write)(u32, u32, int) = nullptr;
++int gHarnessInDMA = 0;
++
+ void NDS::ARM9IOWrite8(u32 addr, u8 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_IO"); t) { static u32 ta = strtoul(t, nullptr, 16); if ((addr & ~3u) == (ta & ~3u)) fprintf(stderr, "io9 w%d %08X=%X pc %08X\n", 8, addr, (u32)val, ARM9.R[15]); }
++    if (gHarnessIOWrite) gHarnessIOWrite(addr, val, 1);
+     switch (addr)
+     {
+     case 0x04000004: GPU.SetDispStat(0, val, 0x00FF); return;
+@@ -3271,6 +3278,8 @@ void NDS::ARM9IOWrite8(u32 addr, u8 val)
+ 
+ void NDS::ARM9IOWrite16(u32 addr, u16 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_IO"); t) { static u32 ta = strtoul(t, nullptr, 16); if ((addr & ~3u) == (ta & ~3u)) fprintf(stderr, "io9 w%d %08X=%X pc %08X\n", 16, addr, (u32)val, ARM9.R[15]); }
++    if (gHarnessIOWrite) gHarnessIOWrite(addr, val, 2);
+     switch (addr)
+     {
+     case 0x04000004: GPU.SetDispStat(0, val, 0xFFFF); return;
+@@ -3448,6 +3457,8 @@ void NDS::ARM9IOWrite16(u32 addr, u16 val)
+ 
+ void NDS::ARM9IOWrite32(u32 addr, u32 val)
+ {
++    if (static const char* t = getenv("MELON_TRACE_IO"); t) { static u32 ta = strtoul(t, nullptr, 16); if ((addr & ~3u) == (ta & ~3u)) fprintf(stderr, "io9 w%d %08X=%X pc %08X\n", 32, addr, (u32)val, ARM9.R[15]); }
++    if (gHarnessIOWrite) gHarnessIOWrite(addr, val, 4);
+     switch (addr)
+     {
+     case 0x04000004:
+@@ -3844,6 +3855,7 @@ u32 NDS::ARM7IORead32(u32 addr)
+ 
+ void NDS::ARM7IOWrite8(u32 addr, u8 val)
+ {
++    if (gHarnessIO7Write) gHarnessIO7Write(addr, val, 1);
+     switch (addr)
+     {
+     case 0x04000004: GPU.SetDispStat(1, val, 0x00FF); return;
+@@ -3945,6 +3957,7 @@ void NDS::ARM7IOWrite8(u32 addr, u8 val)
+ 
+ void NDS::ARM7IOWrite16(u32 addr, u16 val)
+ {
++    if (gHarnessIO7Write) gHarnessIO7Write(addr, val, 2);
+     switch (addr)
+     {
+     case 0x04000004: GPU.SetDispStat(1, val, 0xFFFF); return;
+@@ -4093,6 +4106,7 @@ void NDS::ARM7IOWrite16(u32 addr, u16 val)
+ 
+ void NDS::ARM7IOWrite32(u32 addr, u32 val)
+ {
++    if (gHarnessIO7Write) gHarnessIO7Write(addr, val, 4);
+     switch (addr)
+     {
+     case 0x04000004:
+diff --git a/src/NDS.h b/src/NDS.h
+index 729706b..a608ea6 100644
+--- a/src/NDS.h
++++ b/src/NDS.h
+@@ -246,6 +246,9 @@ class AREngine;
+ class GPU;
+ class ARMJIT;
+ 
++extern void (*gHarnessIOWrite)(u32 addr, u32 val, int size); // harness: arm9 cpu io writes
++extern void (*gHarnessIO7Write)(u32 addr, u32 val, int size); // harness: arm7 io writes (cpu and dma)
++extern int gHarnessInDMA;
+ class NDS
+ {
+ private:
+@@ -558,6 +561,7 @@ protected:
+     u32 RunFrame();
+ 
+ public:
++    DMA& HarnessDMA(int i) { return DMAs[i]; } // harness: read the dma channels
+     NDS(NDSArgs&& args, void* userdata = nullptr) noexcept : NDS(std::move(args), 0, userdata) {}
+     NDS() noexcept;
+     virtual ~NDS() noexcept;
+diff --git a/src/NDSCart/CartHomebrew.cpp b/src/NDSCart/CartHomebrew.cpp
+index 5598355..4f4def8 100644
+--- a/src/NDSCart/CartHomebrew.cpp
++++ b/src/NDSCart/CartHomebrew.cpp
+@@ -16,6 +16,7 @@
+     with melonDS. If not, see http://www.gnu.org/licenses/.
+ */
+ 
++#include "../Savestate.h"
+ #include "CartHomebrew.h"
+ #include "../NDS.h"
+ #include "melonDLDI.h"
+@@ -247,3 +248,16 @@ void CartHomebrew::ROMCommandFinish()
+ }
+ 
+ }
++
++// harness: the sector stream survives an emulator snapshot
++void melonDS::NDSCart::CartHomebrew::DoSavestate(melonDS::Savestate* file)
++{
++    CartCommon::DoSavestate(file);
++    file->Section("HBSD");
++    file->Var32(&DSpicoStreamSector);
++    file->Var32(&DSpicoPollsLeft);
++    file->VarBool(&DSpicoReady);
++    file->Var32(&SectorAddr);
++    file->Var32(&SectorPos);
++    file->VarArray(SectorBuffer, sizeof(SectorBuffer));
++}
+diff --git a/src/NDSCart/CartHomebrew.h b/src/NDSCart/CartHomebrew.h
+index 7e7ea98..96f0131 100644
+--- a/src/NDSCart/CartHomebrew.h
++++ b/src/NDSCart/CartHomebrew.h
+@@ -39,6 +39,7 @@ public:
+     u32 ROMCommandReceive() override;
+     void ROMCommandTransmit(u32 val) override;
+     void ROMCommandFinish() override;
++    void DoSavestate(Savestate* file) override;
+ };
+ 
+ }
+diff --git a/src/SPU.h b/src/SPU.h
+index 34af364..b44eec7 100644
+--- a/src/SPU.h
++++ b/src/SPU.h
+@@ -226,6 +226,10 @@ class SPU
+ {
+ public:
+     explicit SPU(melonDS::NDS& nds, AudioBitDepth bitdepth, AudioInterpolation interpolation, double outputSampleRate);
++    // harness: read access to the channel and control state
++    SPUChannel& HarnessChannel(int i) { return Channels[i]; }
++    u16 HarnessCnt() const { return Cnt; }
++    u16 HarnessBias() const { return Bias; }
+     ~SPU();
+     void Reset();
+     void DoSavestate(Savestate* file);
+-- 
+2.43.0
+

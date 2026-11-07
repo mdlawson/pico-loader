@@ -1,0 +1,8 @@
+eba|eba/Elite Beat Agents (USA).nds|1500:300|
+gsdd|gsdd/Golden Sun - Dark Dawn (USA, Australia) (En,Es).nds|1500:300|
+gta|gta/Grand Theft Auto - Chinatown Wars (USA) (En,Fr,De,Es,It).nds|1500:300|
+st|st/Legend of Zelda, The - Spirit Tracks (USA) (En,Fr,Es) (Rev 1).nds|1500:300|
+mph|mph/Metroid Prime - Hunters (USA) (Rev 1).nds|1500:300|
+nsmb|nsmb/New Super Mario Bros. (USA).nds|1500:300|
+diy|diy/WarioWare - D.I.Y. (USA).nds|1500:300|
+dq9|dq9/Dragon Quest IX - Sentinels of the Starry Skies (USA) (En,Fr,Es).nds|1500:300|

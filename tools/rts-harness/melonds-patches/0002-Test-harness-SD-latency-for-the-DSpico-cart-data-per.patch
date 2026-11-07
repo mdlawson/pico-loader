@@ -1,0 +1,36 @@
+From c4205ef848874ad95414b82e44377058131c1be4 Mon Sep 17 00:00:00 2001
+From: Claude <claude@mdlawson.com>
+Date: Tue, 3 Nov 2026 09:48:36 +0000
+Subject: [PATCH 2/3] Test harness: SD latency for the DSpico cart, data
+ permission write trace
+
+MELON_TRACE_DPERM=1 logs every change to the arm9's data permissions with
+the pc that made it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01CwsEkqb8ecKxcrBh97pUFG
+---
+ src/CP15.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/CP15.cpp b/src/CP15.cpp
+index 9fa0281..443d470 100644
+--- a/src/CP15.cpp
++++ b/src/CP15.cpp
+@@ -1,3 +1,4 @@
++#include <cstdlib>
+ /*
+     Copyright 2016-2026 melonDS team
+ 
+@@ -542,6 +543,8 @@ void ARMv5::CP15Write(u32 id, u32 val)
+ 
+     case 0x502: // data permissions
+         {
++            if (getenv("MELON_TRACE_DPERM") && (PU_DataRW ^ val))
++                Log(LogLevel::Warn, "dperm %08X -> %08X at pc %08X cpsr %08X\n", PU_DataRW, val, R[15], CPSR);
+             u32 diff = PU_DataRW ^ val;
+             PU_DataRW = val;
+             for (u32 i = 0; i < 8; i++)
+-- 
+2.43.0
+

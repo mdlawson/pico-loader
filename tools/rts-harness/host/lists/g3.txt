@@ -1,0 +1,3 @@
+eba|eba/Elite Beat Agents (USA).nds|1500:300|
+mph|mph/Metroid Prime - Hunters (USA) (Rev 1).nds|1500:300|
+nsmb|nsmb/New Super Mario Bros. (USA).nds|1500:300|

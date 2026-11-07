@@ -1,0 +1,130 @@
+From 4596edf5fc6c59980c046a07887595875324ce32 Mon Sep 17 00:00:00 2001
+From: Claude <claude@mdlawson.com>
+Date: Tue, 3 Nov 2026 00:18:07 +0000
+Subject: [PATCH 1/3] Test harness: DSpico sd commands in the homebrew cart
+
+Off unless the host sets gDSpicoDLDI: then the cart patches in the DSpico's DLDI
+driver and answers E3/E4/E5/F6, with an optional poll delay for sd latency.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01CwsEkqb8ecKxcrBh97pUFG
+---
+ src/NDSCart/CartHomebrew.cpp | 67 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 66 insertions(+), 1 deletion(-)
+
+diff --git a/src/NDSCart/CartHomebrew.cpp b/src/NDSCart/CartHomebrew.cpp
+index ab53126..5598355 100644
+--- a/src/NDSCart/CartHomebrew.cpp
++++ b/src/NDSCart/CartHomebrew.cpp
+@@ -19,6 +19,7 @@
+ #include "CartHomebrew.h"
+ #include "../NDS.h"
+ #include "melonDLDI.h"
++#include <vector>
+ 
+ // CartHomebrew: high-level "flashcart" for homebrew ROMs
+ // implements simple SD card access commands, which are used by the melonDS DLDI driver
+@@ -32,6 +33,16 @@ using Platform::LogLevel;
+ namespace NDSCart
+ {
+ 
++// Test harness addition: when set (the DSpico's DLDI driver), the cart speaks the
++// DSpico's sd commands instead of melonDS's own, so its loader builds run as is.
++std::vector<u8> gDSpicoDLDI;
++static bool DSpico() { return !gDSpicoDLDI.empty(); }
++static u32 DSpicoStreamSector = 0;
++// polls that answer "not yet" after each sector command, like a real sd card's latency
++u32 gDSpicoPollDelay = 0;
++static u32 DSpicoPollsLeft = 0;
++static bool DSpicoReady = true;
++
+ CartHomebrew::CartHomebrew(const u8* rom, u32 len, u32 chipid, ROMListEntry romparams, void* userdata, std::optional<FATStorage>&& sdcard) :
+     CartSD(rom, len, chipid, romparams, userdata, std::move(sdcard))
+ {}
+@@ -46,7 +57,9 @@ void CartHomebrew::Reset()
+ {
+     CartSD::Reset();
+ 
+-    if (SD)
++    if (SD && DSpico())
++        ApplyDLDIPatch(gDSpicoDLDI.data(), gDSpicoDLDI.size(), SD->IsReadOnly());
++    else if (SD)
+         ApplyDLDIPatch(melonDLDI, sizeof(melonDLDI), SD->IsReadOnly());
+ }
+ 
+@@ -92,6 +105,39 @@ void CartHomebrew::ROMCommandStart(NDSCart::NDSCartSlot& cartslot, const u8* cmd
+ 
+     memcpy(ROMCmd, cmd, 8);
+ 
++    if (DSpico())
++    {
++        u32 sector = (ROMCmd[4]<<24) | (ROMCmd[5]<<16) | (ROMCmd[6]<<8) | ROMCmd[7];
++        switch (ROMCmd[0])
++        {
++        case 0xE3: // start reading at a sector
++            DSpicoStreamSector = sector;
++            DSpicoPollsLeft = gDSpicoPollDelay;
++            return;
++        case 0xE4: // poll: is the next sector, or the last write, ready
++            DSpicoReady = DSpicoPollsLeft == 0;
++            if (DSpicoPollsLeft) DSpicoPollsLeft--;
++            return;
++        case 0xE5: // the next sector
++            if (SD) SD->ReadSectors(DSpicoStreamSector, 1, SectorBuffer);
++            DSpicoStreamSector++;
++            DSpicoPollsLeft = gDSpicoPollDelay;
++            SectorPos = 0;
++            return;
++        case 0xF6: // write a sector
++            SectorAddr = sector;
++            DSpicoPollsLeft = gDSpicoPollDelay;
++            SectorPos = 0;
++            return;
++        case 0xB7: case 0xB8: case 0x00: case 0x9F: case 0x90: case 0x3C:
++            break;
++        default:
++            Log(LogLevel::Warn, "DSpico: unknown command %02X %02X %02X %02X %02X %02X %02X %02X\n",
++                ROMCmd[0], ROMCmd[1], ROMCmd[2], ROMCmd[3], ROMCmd[4], ROMCmd[5], ROMCmd[6], ROMCmd[7]);
++            break;
++        }
++    }
++
+     switch (ROMCmd[0])
+     {
+     case 0xC0: // SD read
+@@ -115,6 +161,17 @@ u32 CartHomebrew::ROMCommandReceive()
+     if (ResetState) return 0;
+     if (CmdEncMode != 2) return CartSD::ROMCommandReceive();
+ 
++    if (DSpico())
++    {
++        if (ROMCmd[0] == 0xE4) return DSpicoReady ? 1 : 0;
++        if (ROMCmd[0] == 0xE5)
++        {
++            u32 ret = SectorPos < 512 ? *(u32*)&SectorBuffer[SectorPos] : 0;
++            SectorPos += 4;
++            return ret;
++        }
++    }
++
+     switch (ROMCmd[0])
+     {
+     case 0xC0:
+@@ -140,6 +197,14 @@ void CartHomebrew::ROMCommandTransmit(u32 val)
+     if (ResetState) return;
+     if (CmdEncMode != 2) return CartSD::ROMCommandTransmit(val);
+ 
++    if (DSpico() && ROMCmd[0] == 0xF6)
++    {
++        if (SectorPos < 512) *(u32*)&SectorBuffer[SectorPos] = val;
++        SectorPos += 4;
++        if (SectorPos == 512 && SD && !SD->IsReadOnly()) SD->WriteSectors(SectorAddr, 1, SectorBuffer);
++        return;
++    }
++
+     switch (ROMCmd[0])
+     {
+     case 0xC1:
+-- 
+2.43.0
+
