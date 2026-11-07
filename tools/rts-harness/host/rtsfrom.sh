@@ -10,7 +10,7 @@ cp "$C/sd.img" "$D/sd.img"; rm -f "$D/sd.img.idx"
 SD=$(python3 -c "import json;print(json.load(open('$C/info.json'))['sd'])")
 DSI=$(python3 -c "import json;print('1' if json.load(open('$C/info.json'))['dsi'] else '')")
 X=(); [ -n "$DSI" ] && X=(--bios9i $B/bios9i.bin --bios7i $B/bios7i.bin)
-MB=$(( $(stat -c %s "$D/sd.img") >> 20 )); [ $MB -gt 256 ] && export DSHOST_SD_MB=512
+MB=$(( $(wc -c < "$D/sd.img") >> 20 )); [ $MB -gt 256 ] && export DSHOST_SD_MB=512
 SECONDS=0
 LOAD_STATE="$D/state.mst" SDIMG_ONLY=1 $DSHOST --dspico $DLDI \
   --bios9 $B/bios9.bin --bios7 $B/bios7.bin --firmware $B/firmware.bin "${X[@]}" \

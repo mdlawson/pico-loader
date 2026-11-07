@@ -30,4 +30,4 @@ run() {
   echo "$name ($SECONDS s): $(grep '^result' "$d/report.txt" 2>/dev/null || echo 'no report') ($(tail -1 "$d/stderr.txt"))"
 }
 export -f run; export OUT MODE PICO KEEP_SHD RTS_MODE TRACE_EXTRA
-grep -v '^\s*$' "$LIST" | xargs -d '\n' -P "$(nproc)" -I{} bash -c 'run "$@"' _ {} | tee "$OUT/summary.txt"
+grep -v '^[[:space:]]*$' "$LIST" | tr '\n' '\0' | xargs -0 -n1 -P "$(nproc)" bash -c 'run "$1"' _ | tee "$OUT/summary.txt"

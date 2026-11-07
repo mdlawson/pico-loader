@@ -19,3 +19,5 @@ export HOSTDIR HARNESS PICO_LOADER EMU BIOS ROMS SDROOT OUTDIR PLAYROOT PICO_DIR
 # romPath NAME: absolute paths pass through, others are relative to $ROMS
 romPath() { case "$1" in /*) echo "$1";; *) echo "$ROMS/$1";; esac; }
 export -f romPath
+# macOS: no nproc in the base system
+command -v nproc >/dev/null || { nproc() { sysctl -n hw.ncpu; }; export -f nproc; }

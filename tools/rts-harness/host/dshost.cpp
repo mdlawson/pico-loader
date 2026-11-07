@@ -121,7 +121,16 @@ int main(int argc, char** argv)
         args.JIT = std::nullopt;
         if (!bios9.empty()) { auto b = readFile(bios9); args.ARM9BIOS = std::make_unique<ARM9BIOSImage>(); memcpy(args.ARM9BIOS->data(), b.data(), std::min(b.size(), args.ARM9BIOS->size())); }
         if (!bios7.empty()) { auto b = readFile(bios7); args.ARM7BIOS = std::make_unique<ARM7BIOSImage>(); memcpy(args.ARM7BIOS->data(), b.data(), std::min(b.size(), args.ARM7BIOS->size())); }
-        if (!firmware.empty()) { auto b = readFile(firmware); args.Firmware = Firmware(b.data(), b.size()); }
+        if (!firmware.empty())
+        {
+            auto b = readFile(firmware);
+            Firmware fw(b.data(), b.size());
+            // boot straight into the cart, as the dumps this was developed with did: a dump with
+            // the boot menu set to manual stops at the DS menu (only the copy in memory changes)
+            for (auto& u : fw.GetUserData()) u.Settings |= Firmware::BootMenu::Autostart;
+            fw.UpdateChecksums();
+            args.Firmware = std::move(fw);
+        }
     };
     if (!bios9i.empty())
     {
@@ -144,6 +153,15 @@ int main(int argc, char** argv)
     }
     nds->SetRenderer(std::make_unique<SoftRenderer>(*nds));
     nds->Reset();
+    // melonDS starts the RTC with "power lost" set, and some firmware dumps then stop at
+    // "you must adjust system settings" instead of booting the cart. Clear just that flag
+    // (the clock itself is left as it was).
+    {
+        RTC::StateData rtc;
+        nds->RTC.GetState(rtc);
+        rtc.StatusReg1 &= ~0x80;
+        nds->RTC.SetState(rtc);
+    }
 
     auto rom = readFile(cart);
     NDSCart::NDSCartArgs cartArgs;

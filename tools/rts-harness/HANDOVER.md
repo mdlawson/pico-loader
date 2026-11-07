@@ -55,8 +55,17 @@ tools/rts-harness/host/make_pico.sh
 picoLoader9.bin (renamed from picoLoader9_DSPICO.bin), picoLoader7.bin, rtsmenu9.bin, aplist.bin,
 patchlist.bin and savelist.bin to `$PICO_DIR`. Pass another directory as its argument to keep
 several builds side by side (e.g. `~/emu/pico_v19`), and point a run at one with `PICO=dir`.
-The launcher only needs rebuilding if you change it (`make` in `launcher/` with the same
+It copies `data/*.bin` as they are: generate them once with `make apList saveList patchList`
+(needs the .NET 9 SDK). The launcher only needs rebuilding if you change it (`make` in `launcher/` with the same
 toolchain variables as the loader; it includes `include/picoLoader7.h` from this repo).
+
+**macOS (Apple Silicon)** works too: Wonderful's macOS installer, `brew install cmake dotnet@9`
+(keg-only: put `/opt/homebrew/opt/dotnet@9/bin` on PATH for the `make` above). `build_dshost.sh`
+configures melonDS without the JIT and OpenGL renderer (dshost uses neither; the JIT faults at
+start on macOS and the GL header fails under Apple clang) and compiles dshost with the core's own
+defines (`GDBSTUB_ENABLED` changes the `NDS` layout). Set `MELONDS` if the checkout isn't at
+`$EMU/melonDS`. dshost clears the RTC's power-lost flag and sets the firmware's autostart in its
+in-memory copy, so a dump with manual boot or a lost clock still boots the cart.
 
 Check it works (about a minute):
 
