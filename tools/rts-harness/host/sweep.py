@@ -3,12 +3,13 @@
 
   sweep.py run LIBRARY OUTDIR [--frames 1500,2500,...] [--mode ds|dsi] [--only code,...]
   sweep.py report OUTDIR          summary.tsv, contact sheets and the triage list
-  sweep.py autosd LIBRARY SDDIR [--frames ...] [--only ...] [--pico DIR]
+  sweep.py autosd LIBRARY SDDIR [--frames ...] [--only ...] [--pico DIR] [--card-roms DIR]
                                   an sd card folder for the autopilot (real hardware or
                                   dsrun.sh): launcher, the autopilot _pico set (make_pico.sh
                                   with RTS_AUTOPILOT=1, default ~/emu/rts_pico_auto), the
                                   roms in /roms and /_pico/autolist.txt, one run per game
-                                  and save frame
+                                  and save frame; --card-roms /Games uses the roms already
+                                  under that folder of the card (matched by game code)
 
 LIBRARY is mklib.py's list (code|rom|unit|title). Every game gets the same generic input
 (generic_input below): A taps, centre-screen touches and START presses to get through title
@@ -162,26 +163,43 @@ def color(r):
 def cmd_autosd(argv):
     lib, sd = argv[0], argv[1]
     frames, only, pico = [1500, 4500, 9000], None, os.path.expanduser("~/emu/rts_pico_auto")
+    cardRoms = None
     i = 2
     while i < len(argv):
         if argv[i] == "--frames": frames = [int(x) for x in argv[i + 1].split(",")]; i += 2
         elif argv[i] == "--only": only = set(argv[i + 1].split(",")); i += 2
         elif argv[i] == "--pico": pico = argv[i + 1]; i += 2
+        elif argv[i] == "--card-roms": cardRoms = argv[i + 1]; i += 2
         else: sys.exit(f"unknown argument {argv[i]}")
     roms = os.environ.get("ROMS", os.path.expanduser("~/emu/roms"))
+    # roms already on the card: game code -> path on the card
+    onCard = {}
+    if cardRoms:
+        for root, _, files in os.walk(os.path.join(sd, cardRoms.lstrip("/"))):
+            for f in sorted(files):
+                if f.lower().endswith(".nds") and not f.startswith("._"):
+                    full = os.path.join(root, f)
+                    with open(full, "rb") as fh:
+                        code = fh.read(0x10)[0xC:0x10].decode("ascii", "replace").lower()
+                    onCard.setdefault(code, "/" + os.path.relpath(full, sd).replace(os.sep, "/"))
     games = [g for g in read_lib(lib) if not only or g[0] in only]
     os.makedirs(os.path.join(sd, "_pico"), exist_ok=True)
-    os.makedirs(os.path.join(sd, "roms"), exist_ok=True)
     for f in os.listdir(pico):
         shutil.copyfile(os.path.join(pico, f), os.path.join(sd, "_pico", f))
     shutil.copyfile(os.path.join(os.path.dirname(HERE), "launcher", "launcher.nds"), os.path.join(sd, "launcher.nds"))
     lines = []
+    copied = 0
     for code, rom, unit, title in games:
-        dest = os.path.join(sd, "roms", code + ".nds")
-        if not os.path.exists(dest):
-            shutil.copyfile(os.path.join(roms, rom), dest)
+        path = onCard.get(code)
+        if not path:
+            os.makedirs(os.path.join(sd, "roms"), exist_ok=True)
+            path = f"/roms/{code}.nds"
+            dest = os.path.join(sd, "roms", code + ".nds")
+            if not os.path.exists(dest):
+                shutil.copyfile(os.path.join(roms, rom), dest)
+                copied += 1
         for fr in frames:
-            lines.append(f"/roms/{code}.nds|{fr}|300")
+            lines.append(f"{path}|{fr}|300")
     with open(os.path.join(sd, "_pico", "autolist.txt"), "w") as w:
         w.write("# rom|save frame|gap frames: one restore test run a line (see HANDOVER.md, Autopilot)\n")
         w.write("\n".join(lines) + "\n")
@@ -189,7 +207,8 @@ def cmd_autosd(argv):
         p = os.path.join(sd, "_pico", f)
         if os.path.exists(p):
             os.remove(p)
-    print(f"{len(lines)} runs ({len(games)} games x {len(frames)} save frames) in {sd}")
+    print(f"{len(lines)} runs ({len(games)} games x {len(frames)} save frames) in {sd}; "
+          f"{len(games) - sum(1 for g in games if g[0] not in onCard)} roms already on the card, {copied} copied")
 
 
 def cmd_report(argv):
