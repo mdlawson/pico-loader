@@ -819,24 +819,41 @@ holdEnd:
 // script's keys (A for 3 frames every 40 from frame 300, START 10 frames after
 // every fifth A until 3500, from 2540 a direction for 50 frames every 120: right,
 // down, left, up; nothing in the 40 frames before the save) and at saveFrame
-// freezes the game for the menu (step SAVE). Every step: keys = KEYINPUT with the
-// script's presses, which the game reads instead of KEYINPUT. Keeps r4-r11.
+// freezes the game for the menu (step SAVE). From frame 600 to the save it times
+// the arm9: idle (scanlines halted, the arm9's halt stubs add them) starts from 0
+// there, and each vblank that saw no idle counts in starved. Every step: keys =
+// KEYINPUT with the script's presses, which the game reads instead of KEYINPUT.
+// Keeps r4-r11.
 autopilotTick:
     push {r4-r6, lr}
     ldr r4, patch_exitcombo_arm7_block_address
     add r4, r4, #0x170
-    ldr r5, [r4, #4] // saveFrame
+    ldrh r5, [r4, #4] // saveFrame
     cmp r5, #0
     beq 9f
     mov r3, #0 // the keys pressed
-    ldrh r0, [r4, #12] // step
+    ldrh r0, [r4, #10] // step
     cmp r0, #0 // PLAY
     bne 7f
-    ldr r6, [r4, #8] // frame
+    ldr r6, apFrame
     add r6, r6, #1
-    str r6, [r4, #8]
+    str r6, apFrame
     cmp r6, r5
     bhs 8f
+    // the timing window
+    ldr r0, [r4, #12] // idle
+    cmp r6, #600
+    moveq r0, #0
+    streq r0, [r4, #12]
+    strheq r0, [r4, #8] // starved
+    blo 2f
+    ldr r1, apLastIdle
+    cmp r0, r1
+    ldrheq r1, [r4, #8]
+    addeq r1, r1, #1
+    strheq r1, [r4, #8]
+2:
+    str r0, apLastIdle
     sub r0, r5, #40
     cmp r6, r0
     bhs 7f // quiet before the save
@@ -870,7 +887,7 @@ autopilotTick:
 8:
     // the save: freeze as the test's own freeze does, once things are quiet
     mov r0, #1 // RTS_AUTOPILOT_SAVE
-    strh r0, [r4, #12]
+    strh r0, [r4, #10]
     adrl r12, holdCounter
     ldr r0, freezeComboMagic
     str r0, [r12, #20] // requestKind
@@ -883,6 +900,11 @@ autopilotTick:
     strh r0, [r4] // keys
 9:
     pop {r4-r6, pc}
+
+apFrame:
+    .word 0
+apLastIdle:
+    .word 0
 
 // r0 = n, r1 = d (nonzero) -> r0 = n % d, r1 = n / d (by subtraction: n is small). Uses r2.
 apDivMod:

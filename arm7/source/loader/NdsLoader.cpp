@@ -77,8 +77,8 @@ void NdsLoader::Load(BootMode bootMode)
             multibootBuffer = new u8[sizeof(TWL_SHARED_MEMORY->ntrSharedMem.multibootInfo)];
             memcpy(multibootBuffer, &TWL_SHARED_MEMORY->ntrSharedMem.multibootInfo,
                 sizeof(TWL_SHARED_MEMORY->ntrSharedMem.multibootInfo));
-            exitRequestBuffer = new u8[sizeof(exit_request_block_t)];
-            memcpy(exitRequestBuffer, &TWL_SHARED_MEMORY->exitRequest, sizeof(exit_request_block_t));
+            exitRequestBuffer = new u8[EXIT_REQUEST_COPY_SIZE];
+            memcpy(exitRequestBuffer, &TWL_SHARED_MEMORY->exitRequest, EXIT_REQUEST_COPY_SIZE);
             if (*(vu32*)0x02FFF00C == GAMECODE("ADAJ"))
             {
                 pokemonBuffer = new u8[0x160];
@@ -119,7 +119,7 @@ void NdsLoader::Load(BootMode bootMode)
             }
             // keep the exit combo alive across game-initiated soft resets,
             // but never carry a pending request or a held combo over
-            memcpy(&TWL_SHARED_MEMORY->exitRequest, exitRequestBuffer, sizeof(exit_request_block_t));
+            memcpy(&TWL_SHARED_MEMORY->exitRequest, exitRequestBuffer, EXIT_REQUEST_COPY_SIZE);
             delete[] exitRequestBuffer;
             TWL_SHARED_MEMORY->exitRequest.requestMagic = 0;
             TWL_SHARED_MEMORY->exitRequest.comboMagic = 0;
@@ -1012,8 +1012,9 @@ void NdsLoader::SetupSharedMemory(u32 cardId, u32 agbMem, u32 resetParam, u32 ro
 // every address aliases the same bytes. Again whenever the block changes.
 void NdsLoader::MirrorExitRequestBlock()
 {
-    memcpy((void*)0x027FF680, &TWL_SHARED_MEMORY->exitRequest, sizeof(exit_request_block_t));
-    memcpy((void*)0x023FF680, &TWL_SHARED_MEMORY->exitRequest, sizeof(exit_request_block_t));
+    // with the autopilot after it (EXIT_REQUEST_COPY_SIZE)
+    memcpy((void*)0x027FF680, &TWL_SHARED_MEMORY->exitRequest, EXIT_REQUEST_COPY_SIZE);
+    memcpy((void*)0x023FF680, &TWL_SHARED_MEMORY->exitRequest, EXIT_REQUEST_COPY_SIZE);
 }
 
 void NdsLoader::LoadFirmwareUserSettings()
@@ -1370,20 +1371,22 @@ static u32 autopilotNumber(const char* text, const char* key, u32 fallback)
     return any ? v : fallback;
 }
 
-/// @brief The autopilot build: RTS_AUTOPILOT_PATH (frame=N, gap=N) arms the autopilot
-///        for this boot only, and goes. Without it the autopilot stays off.
-static void setupAutopilot()
+/// @brief The autopilot build: RTS_AUTOPILOT_PATH (frame=N, gap=N, mode=full|basic)
+///        arms the autopilot for this boot only, and goes. Without it the autopilot
+///        stays off. Returns 1 for mode=full, 2 for mode=basic, 0 for the mode file's.
+static int setupAutopilot()
 {
     auto& ap = TWL_SHARED_MEMORY->autopilot;
     ap.keys = 0x3FF;
     ap.keycnt = 0;
     ap.saveFrame = 0;
-    ap.frame = 0;
+    ap.starved = 0;
+    ap.idle = 0;
     ap.step = RTS_AUTOPILOT_PLAY;
     ap.gapFrames = 300;
     auto file = std::make_unique<FIL>();
     if (f_open(file.get(), RTS_AUTOPILOT_PATH, FA_READ) != FR_OK)
-        return;
+        return 0;
     char text[128];
     UINT bytesRead = 0;
     if (f_read(file.get(), text, sizeof(text) - 1, &bytesRead) != FR_OK)
@@ -1392,8 +1395,11 @@ static void setupAutopilot()
     f_close(file.get());
     f_unlink(RTS_AUTOPILOT_PATH);
     ap.gapFrames = autopilotNumber(text, "gap=", 300);
-    ap.saveFrame = autopilotNumber(text, "frame=", 0);
-    LOG_DEBUG("Autopilot: save at frame %u, gap %u\n", ap.saveFrame, ap.gapFrames);
+    u32 frame = autopilotNumber(text, "frame=", 0);
+    ap.saveFrame = frame > 0xFFFF ? 0xFFFF : frame;
+    int mode = strstr(text, "mode=basic") ? 2 : strstr(text, "mode=full") ? 1 : 0;
+    LOG_DEBUG("Autopilot: save at frame %u, gap %u, mode %d\n", ap.saveFrame, ap.gapFrames, mode);
+    return mode;
 }
 #endif
 
@@ -1405,7 +1411,7 @@ void NdsLoader::SetupRtsStateFile()
         return;
     }
 #ifdef RTS_AUTOPILOT
-    setupAutopilot();
+    int autopilotMode = setupAutopilot();
 #endif
     char path[48];
     char code[5];
@@ -1444,6 +1450,11 @@ void NdsLoader::SetupRtsStateFile()
         bool basic = rtsDefaultBasic(_romHeader.gameCode);
         mini_snprintf(path, sizeof(path), RTS_STATE_DIRECTORY "/%s.cfg", code);
         rts.configSector = readRtsConfig(path, basic);
+#ifdef RTS_AUTOPILOT
+        // the autopilot's run says which (the A/B timing runs), over the mode file
+        if (autopilotMode)
+            basic = autopilotMode == 2;
+#endif
         rts.options = basic ? (RTS_OPTION_BASIC | RTS_OPTION_NEXT_BASIC) : 0;
         // dsi mode has no register shadow yet: basic whatever the file says
         if (_runInDSiMode)

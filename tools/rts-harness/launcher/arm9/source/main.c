@@ -4,7 +4,8 @@
 // The game path can be overridden by /launch.txt (one line).
 //
 // Autopilot (with a loader built RTS_AUTOPILOT=1): /_pico/autolist.txt lists runs,
-// one a line, rom|saveFrame[|gapFrames]. Each boot of this launcher records the
+// one a line, rom|saveFrame[|gapFrames[|full|basic]] (the mode over the game's mode
+// file, for timing the shadow against no shadow). Each boot of this launcher records the
 // result of the run before (from /_pico/rtslog.txt, into /_pico/autoresults.txt),
 // then starts the next: /_pico/autotest.txt tells the loader the save frame, and
 // the game comes back here by itself once the menu has compared. Where it is goes
@@ -100,13 +101,23 @@ static int autopilotNext(char* romPath, int size)
         long memory = logNumber(text, "memory parts that differ: ");
         long registers = logNumber(text, "registers that differ: ");
         long run = logNumber(text, "parts that differ: ");
+        long idle = logNumber(text, "idle per mille: ");
+        long starved = logNumber(text, "starved frames: ");
+        long timed = logNumber(text, "timed frames: ");
+        char timing[64] = "";
+        // no idle at all: the game waits some other way (the bios's IntrWait, a busy
+        // loop) than the halt the loader times
+        if (idle == 0 && timed > 0)
+            snprintf(timing, sizeof(timing), "|idle n/a (no halts timed)");
+        else if (idle >= 0)
+            snprintf(timing, sizeof(timing), "|idle %ld.%ld%%|starved %ld/%ld", idle / 10, idle % 10, starved, timed);
         FILE* out = fopen(AUTO_RESULTS, "a");
         if (out)
         {
             if (run < 0)
-                fprintf(out, "%d|%s|no result (crashed, hung or no menu)\n", running, line);
+                fprintf(out, "%d|%s|no result (crashed, hung or no menu)%s\n", running, line, timing);
             else
-                fprintf(out, "%d|%s|memory %ld|registers %ld|run %ld\n", running, line, memory, registers, run);
+                fprintf(out, "%d|%s|memory %ld|registers %ld|run %ld%s\n", running, line, memory, registers, run, timing);
             fclose(out);
         }
         printf("run %d: %s\n", running, run < 0 ? "no result" : "done");
@@ -131,6 +142,9 @@ static int autopilotNext(char* romPath, int size)
     char* gap = strchr(frame, '|');
     if (gap)
         *gap++ = 0;
+    char* mode = gap ? strchr(gap, '|') : NULL;
+    if (mode)
+        *mode++ = 0;
     // blank the log, its size and place kept (the loader made it contiguous)
     FILE* log = fopen(RTS_LOG, "r+b");
     if (log)
@@ -151,6 +165,8 @@ static int autopilotNext(char* romPath, int size)
     if (f)
     {
         fprintf(f, "frame=%s\ngap=%s\n", frame, gap && gap[0] ? gap : "300");
+        if (mode && mode[0])
+            fprintf(f, "mode=%s\n", mode);
         fclose(f);
     }
     f = fopen(AUTO_STATE, "w");

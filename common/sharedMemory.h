@@ -102,7 +102,13 @@ static_assert((EXIT_REQUEST_REQUEST_MAGIC & 1) && !(EXIT_REQUEST_FREEZE_REQUEST_
 // Size of the arm7 patch heap. Arm7Patcher (arm9) reserves it and NdsLoader (arm7)
 // copies it into place when it lands in arm7 wram, so both must use this one value.
 // The exit combo with the rts takes about 0x870 of it, the save code the rest.
+#ifdef RTS_AUTOPILOT
+// the autopilot build's arm7 code is bigger: a dsi mode boot's other arm7 patches leave
+// the usual space short (the release build keeps 0x1000)
+#define ARM7_PATCH_SPACE_SIZE       0x1200
+#else
 #define ARM7_PATCH_SPACE_SIZE       0x1000
+#endif
 
 #define EXIT_REQUEST_RUN_MAGIC      (EXIT_REQUEST_PARK_MAGIC + 2)
 #define RTS_INFO_MAGIC              0x31535452 // 'RTS1'
@@ -250,18 +256,24 @@ struct rts_autopilot_t
 {
     u16 keys;       // block + 0x170: KEYINPUT as the game sees it (live keys and the script's)
     u16 keycnt;     // block + 0x172: what a KEYCNT read through the same literal gets
-    u32 saveFrame;  // block + 0x174: vblanks from the game's start to the test's save; 0 off
-    u32 frame;      // block + 0x178: vblanks so far (the arm7 counts)
-    u16 step;       // block + 0x17C: RTS_AUTOPILOT_*
-    u16 gapFrames;  // block + 0x17E: from the reference to the load + compare
+    u16 saveFrame;  // block + 0x174: vblanks from the game's start to the test's save; 0 off
+    u16 gapFrames;  // block + 0x176: from the reference to the load + compare
+    u16 starved;    // block + 0x178: vblanks in the timing window with no arm9 idle (the arm7)
+    u16 step;       // block + 0x17A: RTS_AUTOPILOT_*
+    u32 idle;       // block + 0x17C: scanlines the arm9 spent halted (its halt stubs add them);
+                    // the arm7 zeroes it at RTS_AUTOPILOT_TIMING_FROM
 };
 static_assert(sizeof(rts_autopilot_t) == 0x10);
 #define RTS_AUTOPILOT_PLAY          0 // keys from the script, then the freeze at saveFrame
 #define RTS_AUTOPILOT_SAVE          1 // frozen at saveFrame: the menu saves (test: save + reference)
 #define RTS_AUTOPILOT_LOAD          2 // frozen after the gap: the menu loads (test: load + compare)
 #define RTS_AUTOPILOT_DONE          3 // compared: the menu exits to the launcher
-#define RTS_AUTOPILOT_PATH          "/_pico/autotest.txt" // frame=N, gap=N; read and removed at boot
+#define RTS_AUTOPILOT_PATH          "/_pico/autotest.txt" // frame=N, gap=N, mode=full|basic; read and removed at boot
+#define RTS_AUTOPILOT_TIMING_FROM   600 // the timing window: this frame to the save
 #define RTS_AUTOPILOT_OFFSET        0x170 // from the exit request block
+// what goes with the exit request block wherever it is copied: the block and the
+// autopilot after it (a ds mode game on a dsi sees only the low copies)
+#define EXIT_REQUEST_COPY_SIZE      0x180
 
 //0x02FFC000: 16KB
 struct shared_memory_twl_t
@@ -284,5 +296,7 @@ struct shared_memory_twl_t
 };
 
 static_assert(sizeof(shared_memory_twl_t) == 0x4000);
+static_assert(offsetof(shared_memory_twl_t, autopilot) - offsetof(shared_memory_twl_t, exitRequest) == RTS_AUTOPILOT_OFFSET);
+static_assert(RTS_AUTOPILOT_OFFSET + sizeof(rts_autopilot_t) == EXIT_REQUEST_COPY_SIZE);
 
 #define TWL_SHARED_MEMORY ((shared_memory_twl_t*)0x02FFC000)

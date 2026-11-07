@@ -3,13 +3,19 @@
 
   sweep.py run LIBRARY OUTDIR [--frames 1500,2500,...] [--mode ds|dsi] [--only code,...]
   sweep.py report OUTDIR          summary.tsv, contact sheets and the triage list
-  sweep.py autosd LIBRARY SDDIR [--frames ...] [--only ...] [--pico DIR] [--card-roms DIR]
+  sweep.py profile LIBRARY OUTDIR [--frames ...] [--only ...] [--mode ds|dsi]
+                                  the shadow's cost: plays each game with the generic
+                                  input to each frame and counts the stores to shadowed
+                                  registers (each one a stub run) over the 600 frames
+                                  before it (SHADOWLOG); ranking.tsv, most first
+  sweep.py autosd LIBRARY SDDIR [--frames ...] [--only ...] [--pico DIR] [--card-roms DIR] [--ab]
                                   an sd card folder for the autopilot (real hardware or
                                   dsrun.sh): launcher, the autopilot _pico set (make_pico.sh
                                   with RTS_AUTOPILOT=1, default ~/emu/rts_pico_auto), the
                                   roms in /roms and /_pico/autolist.txt, one run per game
                                   and save frame; --card-roms /Games uses the roms already
-                                  under that folder of the card (matched by game code)
+                                  under that folder of the card (matched by game code);
+                                  --ab: each run twice, full then basic, to time the shadow
 
 LIBRARY is mklib.py's list (code|rom|unit|title). Every game gets the same generic input
 (generic_input below): A taps, centre-screen touches and START presses to get through title
@@ -160,16 +166,24 @@ def color(r):
     return (40, 180, 70) if s <= 3 else (230, 160, 30) if s <= 10 else (220, 40, 40)
 
 
+# no exit combo (the loader leaves it out: NAND saves), so an autopilot run would never end
+NO_EXIT = {"uore", "uorp", "uorj", "uxbp", "uskv", "ugda"}
+# basic by default in the loader (NdsLoader.cpp rtsDefaultBasic): no forced full run
+BASIC_ONLY = {"adme", "admp", "admj", "admk"}
+
+
 def cmd_autosd(argv):
     lib, sd = argv[0], argv[1]
     frames, only, pico = [1500, 4500, 9000], None, os.path.expanduser("~/emu/rts_pico_auto")
     cardRoms = None
+    ab = False
     i = 2
     while i < len(argv):
         if argv[i] == "--frames": frames = [int(x) for x in argv[i + 1].split(",")]; i += 2
         elif argv[i] == "--only": only = set(argv[i + 1].split(",")); i += 2
         elif argv[i] == "--pico": pico = argv[i + 1]; i += 2
         elif argv[i] == "--card-roms": cardRoms = argv[i + 1]; i += 2
+        elif argv[i] == "--ab": ab = True; i += 1
         else: sys.exit(f"unknown argument {argv[i]}")
     roms = os.environ.get("ROMS", os.path.expanduser("~/emu/roms"))
     # roms already on the card: game code -> path on the card
@@ -182,7 +196,7 @@ def cmd_autosd(argv):
                     with open(full, "rb") as fh:
                         code = fh.read(0x10)[0xC:0x10].decode("ascii", "replace").lower()
                     onCard.setdefault(code, "/" + os.path.relpath(full, sd).replace(os.sep, "/"))
-    games = [g for g in read_lib(lib) if not only or g[0] in only]
+    games = [g for g in read_lib(lib) if (not only or g[0] in only) and g[0] not in NO_EXIT]
     os.makedirs(os.path.join(sd, "_pico"), exist_ok=True)
     for f in os.listdir(pico):
         shutil.copyfile(os.path.join(pico, f), os.path.join(sd, "_pico", f))
@@ -199,9 +213,14 @@ def cmd_autosd(argv):
                 shutil.copyfile(os.path.join(roms, rom), dest)
                 copied += 1
         for fr in frames:
-            lines.append(f"{path}|{fr}|300")
+            if ab:
+                if code not in BASIC_ONLY:
+                    lines.append(f"{path}|{fr}|300|full")
+                lines.append(f"{path}|{fr}|300|basic")
+            else:
+                lines.append(f"{path}|{fr}|300")
     with open(os.path.join(sd, "_pico", "autolist.txt"), "w") as w:
-        w.write("# rom|save frame|gap frames: one restore test run a line (see HANDOVER.md, Autopilot)\n")
+        w.write("# rom|save frame|gap frames[|full|basic]: one restore test run a line (see HANDOVER.md, Autopilot)\n")
         w.write("\n".join(lines) + "\n")
     for f in ("autostate.txt", "autoresults.txt", "autotest.txt"):
         p = os.path.join(sd, "_pico", f)
@@ -209,6 +228,70 @@ def cmd_autosd(argv):
             os.remove(p)
     print(f"{len(lines)} runs ({len(games)} games x {len(frames)} save frames) in {sd}; "
           f"{len(games) - sum(1 for g in games if g[0] not in onCard)} roms already on the card, {copied} copied")
+
+
+def cmd_profile(argv):
+    lib, out = argv[0], argv[1]
+    frames, only, mode = DEFAULT_FRAMES, None, "ds"
+    i = 2
+    while i < len(argv):
+        if argv[i] == "--frames": frames = [int(x) for x in argv[i + 1].split(",")]; i += 2
+        elif argv[i] == "--only": only = set(argv[i + 1].split(",")); i += 2
+        elif argv[i] == "--mode": mode = argv[i + 1]; i += 2
+        else: sys.exit(f"unknown argument {argv[i]}")
+    games = [g for g in read_lib(lib) if not only or g[0] in only]
+    os.makedirs(out, exist_ok=True)
+    jobs = os.path.join(out, "jobs.txt")
+    runner = "dsirun.sh" if mode == "dsi" else "dsrun.sh"
+    with open(jobs, "w") as w:
+        for fr in sorted(frames, reverse=True):
+            for code, rom, unit, title in games:
+                w.write(f"{code} {fr}\n")
+    # one sweeprepro run each: the generic input to the frame, the log over the last 600
+    script = (f'c=$0; f=$1; d={out}/$c@$f; mkdir -p $d; '
+              f'SHADOWLOG=$d/shadow.log SHADOWLOG_FROM=$((f - 600)) SHADOW7LOG=$d/shadow7.log '
+              f'RUNNER={runner} {HERE}/sweeprepro.sh $c $f > $d/stderr.txt 2>&1; '
+              f'rm -rf $SDROOT/repro_$c $OUTDIR/repro_$c.img*; echo "$c@$f: $(cat $d/shadow.log.sum 2>/dev/null)"')
+    env = dict(os.environ)
+    env.setdefault("SDROOT", os.path.expanduser("~/emu/rtssd"))
+    env.setdefault("OUTDIR", os.path.expanduser("~/emu/out"))
+    print(f"{len(games)} games x {len(frames)} points, {mode} mode -> {out}", flush=True)
+    nproc = os.cpu_count() or 4
+    with open(jobs) as j:
+        subprocess.run(["xargs", "-P", str(nproc), "-n", "2", "bash", "-c", script], stdin=j, env=env)
+    profile_report(out)
+
+
+def profile_report(out):
+    titles = {}
+    lib = os.path.join(HERE, "lists", "library.txt")
+    if os.path.exists(lib):
+        for code, rom, unit, title in read_lib(lib):
+            titles[code] = title
+    rows = []
+    for name in os.listdir(out):
+        if "@" not in name:
+            continue
+        p = os.path.join(out, name, "shadow.log.sum")
+        if not os.path.exists(p):
+            continue
+        t = open(p).read()
+        m = re.search(r"cpu stores/frame ([\d.]+).*max (\d+).*dma writes/frame ([\d.]+)", t)
+        if not m:
+            continue
+        code, fr = name.split("@")
+        rows.append((float(m.group(1)), int(m.group(2)), float(m.group(3)), code, int(fr)))
+    # by game: its busiest point
+    best = {}
+    for r in rows:
+        if r[3] not in best or r[1] > best[r[3]][1]:
+            best[r[3]] = r
+    ranked = sorted(best.values(), key=lambda r: (-r[1], -r[0]))
+    with open(os.path.join(out, "ranking.tsv"), "w") as w:
+        w.write("code\tframe\tstores/frame avg\tmax\tdma/frame\ttitle\n")
+        for avg, mx, dma, code, fr in ranked:
+            w.write(f"{code}\t{fr}\t{avg:.1f}\t{mx}\t{dma:.1f}\t{titles.get(code, '')}\n")
+    print(f"{len(rows)} profiles, {len(ranked)} games: {out}/ranking.tsv")
 
 
 def cmd_report(argv):
@@ -269,6 +352,6 @@ def cmd_report(argv):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3 or sys.argv[1] not in ("run", "report", "autosd"):
+    if len(sys.argv) < 3 or sys.argv[1] not in ("run", "report", "autosd", "profile"):
         sys.exit(__doc__)
-    {"run": cmd_run, "report": cmd_report, "autosd": cmd_autosd}[sys.argv[1]](sys.argv[2:])
+    {"run": cmd_run, "report": cmd_report, "autosd": cmd_autosd, "profile": cmd_profile}[sys.argv[1]](sys.argv[2:])

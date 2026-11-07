@@ -72,11 +72,13 @@ typedef struct
 {
     u16 keys;
     u16 keycnt;
-    u32 saveFrame;      // 0: off
-    u32 frame;
-    u16 step;           // RTS_AUTOPILOT_*
+    u16 saveFrame;      // 0: off
     u16 gapFrames;
+    u16 starved;        // timing window vblanks with no arm9 idle
+    u16 step;           // RTS_AUTOPILOT_*
+    u32 idle;           // scanlines the arm9 spent halted, from RTS_AUTOPILOT_TIMING_FROM
 } rts_autopilot_t;
+#define RTS_AUTOPILOT_TIMING_FROM 600
 #define RTS_AUTOPILOT_OFFSET    0x170
 #define RTS_AUTOPILOT_PLAY      0
 #define RTS_AUTOPILOT_SAVE      1
@@ -136,6 +138,10 @@ u32 checkLoadedRegisters(void);
 u32 compareTestSlots(void* block, void (*progress)(u32 done, u32 total));
 // Asks stateLeave to check the registers and write the log.
 extern int gCheckOnLeave;
+#ifdef RTS_AUTOPILOT
+// The autopilot's arm9 timing as the save freezes the game, into the log's section 4.
+void autopilotLogTiming(void* block);
+#endif
 
 // cp15.c (arm code, for the thumb files)
 void dcFlushAll(void);       // clean and invalidate the data cache, drain the write buffer

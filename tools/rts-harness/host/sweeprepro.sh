@@ -2,7 +2,8 @@
 # sweeprepro.sh CODE FRAMES [more dshost args] - boots one library game as sweep.py does (fresh SD
 # folder and image, no game save, the generic input of a save point at FRAMES) and runs it for
 # FRAMES frames without the restore test, so the debug variables that print at exit work
-# (ABORT_RING, PC9_RING with PC_RING_N, IO_DUMP...). RTS_MODE=basic|full as for rtsall.sh.
+# (ABORT_RING, PC9_RING with PC_RING_N, IO_DUMP...). RTS_MODE=basic|full as for rtsall.sh;
+# RUNNER=dsirun.sh runs it as a DSi.
 . "$(dirname "$0")/env.sh"
 CODE=$1; F=$2; shift 2
 rom=$(romPath "$(grep "^$CODE|" "$HOSTDIR/lists/library.txt" | cut -d'|' -f2)")
@@ -19,5 +20,5 @@ if [ -n "$RTS_MODE" ]; then
 fi
 echo -n "/game.nds" > "$sd/launch.txt"
 # shellcheck disable=SC2046
-"$HOSTDIR/dsrun.sh" "$sd" "$F" --status 600 \
+"$HOSTDIR/${RUNNER:-dsrun.sh}" "$sd" "$F" --status 600 \
   $(python3 -I -c "import sys; sys.path.insert(0, '$HOSTDIR'); import sweep; print(' '.join(sweep.generic_input($F + 40)))") "$@"

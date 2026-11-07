@@ -480,6 +480,7 @@ static u32 autopilot(void* block, volatile rts_info_t* rts)
     if (ap->step == RTS_AUTOPILOT_SAVE)
     {
         drawStatus2("Autopilot: save + reference", COLOR_TEXT);
+        autopilotLogTiming(block);
         if (!saveState(block))
             return RTS_MENU_STATE_EXIT;
         rts->testMode = TEST_REFERENCE;

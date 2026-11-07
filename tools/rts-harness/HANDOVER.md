@@ -250,8 +250,25 @@ On the DS: use an sd card of its own (the autopilot `_pico` files replace the no
 `/launcher.nds` again: it records the dead run and goes on. Unattended crash recovery needs a
 relay on the power switch and a launcher that starts `/launcher.nds` at power on.
 
-The arm7 code is tight in the autopilot build: 3356 bytes, exactly what Mario Kart DS's arm7 patch
-space had left; all 99 games with the exit combo still took it (checked by booting each).
+The autopilot build gives the arm7 patch space 0x1200 bytes (release: 0x1000): a DS game on a
+DSi or 3DS gets more arm7 patches, and 0x1000 left no room for the exit combo there. All 99 games
+with the exit combo take it in the autopilot build, as a DS and as a DSi (checked by booting each).
+
+**Timing (dropped frames, slowdown).** The autopilot build also times the arm9: every "wait for
+interrupt" (`mcr p15, 0, rX, c7, c0, 4`, the SDK's OS_Halt and idle thread) in the arm9 and its
+autoloads branches to a stub (`AutopilotHaltCode.s`) that halts with irqs masked and adds the
+scanlines halted to `rts_autopilot_t::idle`; the arm7 counts the vblanks that saw no idle at all
+(`starved`). From frame 600 to the save: the menu writes it to the log's section 4 at the save,
+and the launcher adds `idle N.N%|starved S/F` to the result. A game that waits some other way (the
+bios's IntrWait, a busy loop: Advance Wars Dual Strike) shows `idle n/a`. An autolist line's fourth
+field (`full`/`basic`) sets the mode for that boot over the game's mode file; `sweep.py autosd
+--ab` writes each run both ways, so the difference is the shadow's cost (the exit combo's hooks
+are in both). Less idle or more starved frames in full mode is the shadow taking time.
+
+**Ranking (emulator).** `sweep.py profile LIBRARY OUTDIR [--frames ...]` plays each game with the
+generic input and counts the stores to shadowed registers (one stub run each) over the 600 frames
+before each frame (`SHADOWLOG`); `ranking.tsv` lists the games by their busiest point. Stores during
+active lines are raster effects (per-scanline updates), the costliest kind.
 
 ## Playing games for deeper test points (play.py)
 

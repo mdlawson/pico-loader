@@ -732,3 +732,38 @@ int censusWriteLog(void* block, char* line1, char* line2)
     censusRestart();
     return ok;
 }
+
+#ifdef RTS_AUTOPILOT
+// ---------------------------------------------------------------- autopilot timing
+
+// The arm9's idle time from RTS_AUTOPILOT_TIMING_FROM to the save (the halt stubs add
+// the scanlines halted, the arm7 counts the vblanks that saw none), in the log's
+// section 4: the census's, which the autopilot build has none of.
+void autopilotLogTiming(void* block)
+{
+    volatile rts_autopilot_t* ap = (volatile rts_autopilot_t*)((u8*)block + RTS_AUTOPILOT_OFFSET);
+    u32 frames = ap->saveFrame > RTS_AUTOPILOT_TIMING_FROM ? ap->saveFrame - RTS_AUTOPILOT_TIMING_FROM : 0;
+    u32 idle = ap->idle;
+    sLogLen = 0;
+    logStr("RTS autopilot timing");
+    logEnd();
+    logGame(block);
+    logStr("mode: ");
+    logStr(sRts->options & RTS_OPTION_BASIC ? "basic" : "full");
+    logEnd();
+    logStr("timed frames: ");
+    logDec(frames);
+    logEnd();
+    logStr("idle lines: ");
+    logDec(idle);
+    logEnd();
+    // per mille of the frames' scanlines
+    logStr("idle per mille: ");
+    logDec(frames ? idle * 1000 / (frames * 263) : 0);
+    logEnd();
+    logStr("starved frames: ");
+    logDec(ap->starved);
+    logEnd();
+    logWrite(4);
+}
+#endif

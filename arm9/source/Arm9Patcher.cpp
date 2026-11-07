@@ -72,6 +72,9 @@ static bool hasNandSave(u32 gameCode)
 }
 
 #ifdef RTS_AUTOPILOT
+#include <string.h>
+#include "sections.h"
+
 /// @brief The autopilot build: every literal pool word 0x04000130 (KEYINPUT) that a
 ///        pc-relative load reads, arm or thumb, in the decompressed arm9 (its
 ///        autoloads still in place), goes to keys instead, so the game reads the
@@ -108,6 +111,44 @@ static void redirectKeyInput(u32 start, u32 size, u32 keys)
         count++;
     }
     LOG_DEBUG("Autopilot: %u KEYINPUT literals to 0x%x\n", count, keys);
+}
+
+DEFINE_SECTION_SYMBOLS(autopilothalt);
+extern "C" void autopilothalt_entry(void);
+extern "C" u32 autopilothalt_return;
+extern "C" u32 autopilothalt_idle;
+
+/// @brief The autopilot build's timing: every "wait for interrupt" (mcr p15, 0, rX,
+///        c7, c0, 4) in the decompressed arm9 and its autoloads branches to a copy of
+///        autopilothalt (AutopilotHaltCode.s), which adds the scanlines halted to idle.
+static void installHaltTiming(PatchContext& patchContext, u32 start, u32 size, u32 idle)
+{
+    u32 end = start + (size & ~3u);
+    u32 count = 0, failed = 0;
+    auto autoload = patchContext.GetAutoloadAdjuster();
+    for (u32 a = (start + 3) & ~3u; a < end; a += 4)
+    {
+        u32 op = *(const u32*)a;
+        if ((op & 0x0FFF0FFF) != 0x0E070F90 || (op >> 28) == 0xF)
+            continue;
+        // Alloc halts when nothing fits: ask first
+        if (!patchContext.GetPatchHeap().CanAlloc(SECTION_SIZE(autopilothalt)))
+        {
+            failed++;
+            continue;
+        }
+        u32* stub = (u32*)patchContext.GetPatchHeap().Alloc(SECTION_SIZE(autopilothalt));
+        memcpy(stub, SECTION_START(autopilothalt), SECTION_SIZE(autopilothalt));
+        u32 offReturn = (u32)&autopilothalt_return - (u32)SECTION_START(autopilothalt);
+        u32 offIdle = (u32)&autopilothalt_idle - (u32)SECTION_START(autopilothalt);
+        u32 site = autoload ? autoload->AdjustInitialToFinal(a) : a; // where it runs
+        u32 back = (u32)stub + offReturn;
+        *(u32*)((u8*)stub + offReturn) = 0xEA000000 | (((site + 4) - (back + 8)) >> 2 & 0xFFFFFF);
+        *(u32*)((u8*)stub + offIdle) = idle;
+        *(u32*)a = (op & 0xF0000000) | 0x0A000000 | (((u32)stub - (site + 8)) >> 2 & 0xFFFFFF);
+        count++;
+    }
+    LOG_DEBUG("Autopilot: %u halts timed (%u without room)\n", count, failed);
 }
 #endif
 
@@ -344,8 +385,12 @@ Arm9Patcher::PatchResult Arm9Patcher::ApplyPatches(const LoaderPlatform* loaderP
     // the autopilot build: the game reads the autopilot's keys where it read KEYINPUT
     if (exitComboPatch != nullptr && exitComboPatch->IsInstalled() && !runInDSiMode
         && TWL_SHARED_MEMORY->autopilot.saveFrame != 0)
+    {
         redirectKeyInput(romHeader->arm9LoadAddress, arm9Size,
             exitComboPatch->GetBlockAddress() + RTS_AUTOPILOT_OFFSET);
+        installHaltTiming(patchContext, romHeader->arm9LoadAddress, arm9Size,
+            exitComboPatch->GetBlockAddress() + RTS_AUTOPILOT_OFFSET + offsetof(rts_autopilot_t, idle));
+    }
 #endif
 
 #ifndef RTS_CENSUS
