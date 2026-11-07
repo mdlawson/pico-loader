@@ -148,6 +148,67 @@ DS mode, `lists/games_all.txt`, screens differing after a load:
 DSi mode, `lists/g_dsi3.txt` with `dsi`: pkb 0, mvdk 0, solat 1. The load check finds all
 memory parts identical in all three.
 
+## Sweeping a whole library (mklib.py, sweep.py)
+
+For breadth without playing: `mklib.py ZIPDIR` unpacks a folder of rom zips into `$ROMS/<code>/`
+and writes `lists/library.txt` (game code, rom, ds / dsi-enhanced / dsi-only, title). Then
+
+```bash
+./sweep.py run lists/library.txt ~/emu/results/sweep_ds
+```
+
+```bash
+./sweep.py run lists/library.txt ~/emu/results/sweep_dsi --mode dsi
+```
+
+runs the restore test at 7 save frames per game (1500-9000, `--frames` to change, `--only
+code,...` for a subset), every game from a fresh boot (no game save) with the same generic input:
+A every 40 frames, a centre-screen touch every 80, START every 200 until frame 3500, then d-pad
+walks. That gets most games through their title screens into menus, dialogue or play; the save
+points of a game lie along one deterministic play-through. Input ends 40 frames before each save
+point (the test drives the keys from there, and touches during the compare would differ).
+`lists/sweep_input.txt` adds per-game presses (`code|--touch 1600:128:150:3`) or turns the generic
+input off (`code|-`). Runs clean up after themselves (`RTS_CLEAN=1`: sd image and folder, ram
+dumps, sound), so a 700-run sweep needs little disk; about 40 minutes on 12 cores.
+
+`sweep.py report OUTDIR` (run at the end of `run`) writes `summary.tsv`, `triage.txt` (failed or
+more than 3 screens differing) and `sheets/<code>.png`: the screen at each save point with a bar
+under it (green 0-3 screens differing, amber 4-10, red more or failed). Look at the sheets to see
+which save points are real play and which are still a title screen; `sheets/index.png` has every
+game at a glance.
+
+`rtsall.sh` now deletes the game's `game.sav` from its SD folder before each run, so an earlier run's
+in-game save doesn't change how the game boots (`KEEP_SAV=1` keeps it, `SAV=file` starts from one).
+
+`sweeprepro.sh CODE FRAMES [args]` boots one library game the way the sweep does but without the
+restore test, so the exit-time debug output works (`ABORT_RING`, `PC9_RING` with `PC_RING_N=4096`
+for the whole ring, `IO_DUMP`). `--peek` reads the arm9's tcms too.
+
+### First library sweep (2026-11-07, 100 roms, 700 DS + 42 DSi runs)
+
+Fixed from it: Mario Kart DS (a thumb shadow stub in a tail-calling routine that never pushed lr:
+crash in play), Tetris DS (the FS_StartOverlay hook's sinit register on the sdk 4 path), Animal
+Crossing: Wild World (its arm9 uses the arm7's arena, where the shadow goes: basic mode by
+default), Mario & Luigi: Bowser's Inside Story (vblank irq off in play, frames by vcount: the hook
+takes the combo on a vcount then, through the optional vcount piece), Retro Game Challenge and
+Trauma Center 2 (the shadow wrote stale BLDCNT/BLDALPHA over the dump's), Advance Wars (a load lost
+the timer irq pending at the freeze). After: 636 of 700 DS runs at 0-3 screens, failures only
+WarioWare D.I.Y. (on purpose); DSi mode unchanged (38 of 42).
+
+Still open (`~/emu/results/sweep3_ds/triage.txt` has the list):
+- 3D matrix stacks and the projection aren't restored: 3D games show ~11 wrong frames after a load
+  (Moon, Nostalgia, DQ9 at some points). Clears by itself.
+- BG2/BG3 affine reference points sometimes come back 0 (written outside the stubs?); invisible
+  where seen so far, but worth a look.
+- A save during a DMA to the geometry fifo (Dragon Quest Monsters: Joker at some points): the game
+  goes another way after the load (GX fifo irq on, different DMA3).
+- Ninjatown, Planet Puzzle League, Elite Beat Agents (late points), Shin Megami Tensei: Strange
+  Journey (late points): go their own way after a load at some points; not looked into.
+- Animal Crossing in basic mode: two points at 119 (no shadow there, so scroll/affine registers
+  can't come back).
+- DSi mode: Solatorobo and Pokemon White 2 at some points (basic mode only in DSi mode).
+- Measured timer reloads can be one off (tm9.1 in Trauma Center 2): the wrap is read a tick late.
+
 ## Playing games for deeper test points (play.py)
 
 `rtsall.sh` only reaches what scripted key presses reach. For deeper scenes, an agent plays the

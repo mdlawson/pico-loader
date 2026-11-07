@@ -22,12 +22,21 @@ run() {
     printf 'mode=%s\r\n' "$RTS_MODE" > "$sd/_pico/states/$(dd if="$rom" bs=1 skip=12 count=4 2>/dev/null | tr -c 'A-Za-z0-9' '_').cfg"
   fi
   echo -n "/game.nds" > "$sd/launch.txt"
+  # the game's own save from an earlier run would change how it boots: start without one
+  # (KEEP_SAV=1 keeps it; SAV=file starts from that save)
+  [ -n "$KEEP_SAV" ] || rm -f "$sd/game.sav"
+  [ -n "$SAV" ] && cp "$SAV" "$sd/game.sav"
   [ -n "$KEEP_SHD" ] || rm -f $OUTDIR/$name.img*
   script=$HOSTDIR/dsrun.sh; [ "$MODE" = dsi ] && script=$HOSTDIR/dsirun.sh
   # shellcheck disable=SC2086
   SECONDS=0; $script "$sd" 60000 --status 600 --shot 1200:"$d/at_1200.ppm" --rts-test "$frames" --rts-out "$d" $TRACE_EXTRA \
      --shot $(( ${frames%%:*} - 1 )):"$d/at_save.ppm" $extra > "$d/stdout.txt" 2> "$d/stderr.txt"
   echo "$name ($SECONDS s): $(grep '^result' "$d/report.txt" 2>/dev/null || echo 'no report') ($(tail -1 "$d/stderr.txt"))"
+  # RTS_CLEAN=1: drop the sd image and folder, the ram dumps and the sound after the run (sweeps)
+  if [ -n "$RTS_CLEAN" ]; then
+    rm -rf "$OUTDIR/$name.img"* "$sd"
+    rm -f "$d"/ram_*.bin "$d"/*.wav
+  fi
 }
-export -f run; export OUT MODE PICO KEEP_SHD RTS_MODE TRACE_EXTRA
+export -f run; export OUT MODE PICO KEEP_SHD RTS_MODE TRACE_EXTRA KEEP_SAV SAV RTS_CLEAN
 grep -v '^[[:space:]]*$' "$LIST" | tr '\n' '\0' | xargs -0 -n1 -P "$(nproc)" bash -c 'run "$1"' _ | tee "$OUT/summary.txt"

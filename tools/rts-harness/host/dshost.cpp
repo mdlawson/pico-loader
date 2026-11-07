@@ -39,6 +39,15 @@ struct Shot { int frame; std::string path; };
 struct Peek { int frame; u32 addr, words; };
 struct Dump { int frame; u32 addr, len; std::string path; };
 
+// The arm9's view: its tcms first (the bus doesn't see them), then the bus.
+static u32 peek9(melonDS::NDS& nds, u32 a)
+{
+    auto& c = nds.ARM9;
+    if ((a & c.DTCMMask) == c.DTCMBase) return *(u32*)&c.DTCM[a & (melonDS::DTCMPhysicalSize - 4)];
+    if (a < c.ITCMSize) return *(u32*)&c.ITCM[a & (melonDS::ITCMPhysicalSize - 4)];
+    return nds.ARM9Read32(a);
+}
+
 static u32 parseKeys(std::string s)
 {
     static const char* names[] = {"A","B","SELECT","START","RIGHT","LEFT","UP","DOWN","R","L","X","Y"};
@@ -268,7 +277,7 @@ int main(int argc, char** argv)
         for (auto& p : peeks) if (p.frame == f)
         {
             fprintf(stderr, "frame %d peek %08X:", f, p.addr);
-            for (u32 i = 0; i < p.words; i++) fprintf(stderr, " %08X", p.addr >> 31 ? nds->ARM7Read32((p.addr & 0x7FFFFFFF) + i * 4) : nds->ARM9Read32(p.addr + i * 4)); // bit 31: the arm7's bus
+            for (u32 i = 0; i < p.words; i++) fprintf(stderr, " %08X", p.addr >> 31 ? nds->ARM7Read32((p.addr & 0x7FFFFFFF) + i * 4) : peek9(*nds, p.addr + i * 4)); // bit 31: the arm7's bus
             fprintf(stderr, "\n");
         }
         for (auto& d : dumps) if (d.frame == f)
@@ -317,8 +326,8 @@ int main(int argc, char** argv)
         return result;
     }
     if (getenv("IO_DUMP")) { auto& n = *nds; fprintf(stderr, "arm9 IME %X IE %08X IF %08X DISPSTAT %04X | arm7 IME %X IE %08X IF %08X IE2 %08X IF2 %08X DISPSTAT %04X vec7 %08X flags7 %08X | dtcm %08X\n", n.ARM9Read32(0x04000208), n.ARM9Read32(0x04000210), n.ARM9Read32(0x04000214), n.ARM9Read16(0x04000004), n.ARM7Read32(0x04000208), n.ARM7Read32(0x04000210), n.ARM7Read32(0x04000214), n.ARM7Read32(0x04000218), n.ARM7Read32(0x0400021C), n.ARM7Read16(0x04000004), n.ARM7Read32(0x0380FFFC), n.ARM7Read32(0x0380FFF8), n.ARM9.DTCMBase); fprintf(stderr, "scfg9 rom %08X clk %08X ext %08X mc %08X exmem %04X | scfg7 rom %08X clk %08X ext %08X mc %08X exmem %04X | mbk %08X %08X %08X %08X %08X | 9: %08X %08X %08X | 7: %08X %08X %08X | wramcnt %02X\n", n.ARM9Read32(0x04004000), n.ARM9Read32(0x04004004), n.ARM9Read32(0x04004008), n.ARM9Read32(0x04004010), n.ARM9Read16(0x04000204), n.ARM7Read32(0x04004000), n.ARM7Read32(0x04004004), n.ARM7Read32(0x04004008), n.ARM7Read32(0x04004010), n.ARM7Read16(0x04000204), n.ARM9Read32(0x04004040), n.ARM9Read32(0x04004044), n.ARM9Read32(0x04004048), n.ARM9Read32(0x0400404C), n.ARM9Read32(0x04004050), n.ARM9Read32(0x04004054), n.ARM9Read32(0x04004058), n.ARM9Read32(0x0400405C), n.ARM7Read32(0x04004054), n.ARM7Read32(0x04004058), n.ARM7Read32(0x0400405C), n.ARM9Read8(0x04000247)); }
-    if (getenv("PC9_RING")) { fprintf(stderr, "pc9 ring (%d):\n", melonDS::gHarness9Arm); for (u32 i = 0; i < 4096; i++) { u32 v = melonDS::gHarness9Ring[(melonDS::gHarness9N + i) & 4095]; if (i >= 4096 - 400) fprintf(stderr, " %08X", v); } fprintf(stderr, "\n"); }
-    if (getenv("PC7_RING")) { fprintf(stderr, "pc7 ring (%d):\n", melonDS::gHarness7Arm); for (u32 i = 0; i < 4096; i++) { u32 v = melonDS::gHarness7Ring[(melonDS::gHarness7N + i) & 4095]; if (i >= 4096 - 400) fprintf(stderr, " %08X", v); } fprintf(stderr, "\n"); }
+    if (getenv("PC9_RING")) { fprintf(stderr, "pc9 ring (%d):\n", melonDS::gHarness9Arm); for (u32 i = 0; i < 4096; i++) { u32 v = melonDS::gHarness9Ring[(melonDS::gHarness9N + i) & 4095]; if (i >= 4096 - (getenv("PC_RING_N") ? atoi(getenv("PC_RING_N")) : 400)) fprintf(stderr, " %08X", v); } fprintf(stderr, "\n"); }
+    if (getenv("PC7_RING")) { fprintf(stderr, "pc7 ring (%d):\n", melonDS::gHarness7Arm); for (u32 i = 0; i < 4096; i++) { u32 v = melonDS::gHarness7Ring[(melonDS::gHarness7N + i) & 4095]; if (i >= 4096 - (getenv("PC_RING_N") ? atoi(getenv("PC_RING_N")) : 400)) fprintf(stderr, " %08X", v); } fprintf(stderr, "\n"); }
     if (getenv("ABORT_RING")) { fprintf(stderr, "aborts: %u\n", melonDS::gHarnessAbortN); for (u32 i = 0; i < 64 && i < melonDS::gHarnessAbortN; i++) { u32* e = melonDS::gHarnessAbortRing[(melonDS::gHarnessAbortN - 64 + i) & 63]; fprintf(stderr, "  abort pc %08X cpsr %08X sp %08X\n", e[0], e[1], e[2]); } }
     ioprof::report();
     return 0;
