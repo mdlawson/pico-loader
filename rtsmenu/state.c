@@ -901,13 +901,13 @@ static int restoreSectorAround(u32 offset, u32 keepStart, u32 keepEnd)
 }
 
 // The writable arm9 registers, from the dump (offsets from 0x04000000, size),
-// in this order. The scroll, affine, window size, mosaic and fade registers
-// can't be read, so they stay as the running session left them.
+// in this order. The scroll, affine, window size, mosaic and BLDY registers
+// can't be read: they come from the register shadow, if any.
 static const u16 sIoRestore[][2] =
 {
     { 0x004, 2 },                                               // DISPSTAT: vcount line and irq enables
-    { 0x008, 8 }, { 0x048, 4 }, { 0x050, 2 }, { 0x060, 4 },     // BGxCNT, WININ/OUT, BLDCNT, DISP3DCNT
-    { 0x1008, 8 }, { 0x1048, 4 }, { 0x1050, 2 },                // the same of engine B
+    { 0x008, 8 }, { 0x048, 4 }, { 0x050, 4 }, { 0x060, 4 },     // BGxCNT, WININ/OUT, BLDCNT and BLDALPHA, DISP3DCNT
+    { 0x1008, 8 }, { 0x1048, 4 }, { 0x1050, 4 },                // the same of engine B
     { 0x0E0, 16 },                                              // dma fill values
     { 0x280, 2 }, { 0x290, 16 },                                // DIVCNT, numerator, denominator: computes again
     { 0x2B0, 2 }, { 0x2B8, 8 },                                 // SQRTCNT, parameter: the same
@@ -994,6 +994,16 @@ int shadowIntact(void)
     return 1;
 }
 
+// Registers in the shadow's range that read back: the dump has them as they were
+// (sIoRestore). The shadow may not: a game can write them where no stub is (a copy
+// routine, dma), and its older value would undo the dump's (Retro Game Challenge's
+// blending, wrong for good after a load).
+static int shadowReadable(u32 addr)
+{
+    u32 o = addr & 0xFFF;
+    return o >= 0x048 && o < 0x054 && o != 0x04C && o != 0x04E; // WININ/OUT, BLDCNT, BLDALPHA (not MOSAIC)
+}
+
 static void shadowLeave(void)
 {
     u32 start = sRts->censusStart;
@@ -1013,6 +1023,8 @@ static void shadowLeave(void)
             if (!flags[i] && !flags[i + 1])
                 continue;
             u32 addr = i < 0x48 ? 0x04000010 + i : i < 0x90 ? 0x04001010 + (i - 0x48) : 0x04000330 + (i - 0x90);
+            if (shadowReadable(addr))
+                continue;
             *(vu16*)addr = data[i] | (data[i + 1] << 8);
         }
         return;
@@ -1052,6 +1064,8 @@ static void shadowLeave(void)
         if (!flags[i] && !flags[i + 1])
             continue;
         u32 addr = i < 0x48 ? 0x04000010 + i : i < 0x90 ? 0x04001010 + (i - 0x48) : 0x04000330 + (i - 0x90);
+        if (shadowReadable(addr))
+            continue;
         *(vu16*)addr = data[i] | (data[i + 1] << 8);
     }
 }
