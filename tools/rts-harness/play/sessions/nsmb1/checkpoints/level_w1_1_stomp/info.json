@@ -1,0 +1,624 @@
+{
+ "game": "nsmb",
+ "rom": "nsmb/New Super Mario Bros. (USA).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 4417,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133"
+  },
+  {
+   "n": 1,
+   "script": "w:180",
+   "frames": 200,
+   "frame": 500,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "START",
+   "frames": 36,
+   "frame": 536,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 3,
+   "script": "A w:120",
+   "frames": 156,
+   "frame": 692,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 4,
+   "script": "A w:120",
+   "frames": 156,
+   "frame": 848,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 5,
+   "script": "mash:A:12 w:60",
+   "frames": 272,
+   "frame": 1120,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ],
+    [
+     16,
+     "A",
+     6
+    ],
+    [
+     32,
+     "A",
+     6
+    ],
+    [
+     48,
+     "A",
+     6
+    ],
+    [
+     64,
+     "A",
+     6
+    ],
+    [
+     80,
+     "A",
+     6
+    ],
+    [
+     96,
+     "A",
+     6
+    ],
+    [
+     112,
+     "A",
+     6
+    ],
+    [
+     128,
+     "A",
+     6
+    ],
+    [
+     144,
+     "A",
+     6
+    ],
+    [
+     160,
+     "A",
+     6
+    ],
+    [
+     176,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 6,
+   "script": "mash:A:15 w:60",
+   "frames": 320,
+   "frame": 1440,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ],
+    [
+     16,
+     "A",
+     6
+    ],
+    [
+     32,
+     "A",
+     6
+    ],
+    [
+     48,
+     "A",
+     6
+    ],
+    [
+     64,
+     "A",
+     6
+    ],
+    [
+     80,
+     "A",
+     6
+    ],
+    [
+     96,
+     "A",
+     6
+    ],
+    [
+     112,
+     "A",
+     6
+    ],
+    [
+     128,
+     "A",
+     6
+    ],
+    [
+     144,
+     "A",
+     6
+    ],
+    [
+     160,
+     "A",
+     6
+    ],
+    [
+     176,
+     "A",
+     6
+    ],
+    [
+     192,
+     "A",
+     6
+    ],
+    [
+     208,
+     "A",
+     6
+    ],
+    [
+     224,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 7,
+   "script": "mash:A:15 w:120",
+   "frames": 380,
+   "frame": 1820,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ],
+    [
+     16,
+     "A",
+     6
+    ],
+    [
+     32,
+     "A",
+     6
+    ],
+    [
+     48,
+     "A",
+     6
+    ],
+    [
+     64,
+     "A",
+     6
+    ],
+    [
+     80,
+     "A",
+     6
+    ],
+    [
+     96,
+     "A",
+     6
+    ],
+    [
+     112,
+     "A",
+     6
+    ],
+    [
+     128,
+     "A",
+     6
+    ],
+    [
+     144,
+     "A",
+     6
+    ],
+    [
+     160,
+     "A",
+     6
+    ],
+    [
+     176,
+     "A",
+     6
+    ],
+    [
+     192,
+     "A",
+     6
+    ],
+    [
+     208,
+     "A",
+     6
+    ],
+    [
+     224,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 8,
+   "script": "RIGHT:90 w:30",
+   "frames": 150,
+   "frame": 1970,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "RIGHT",
+     90
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 9,
+   "script": "RIGHT:120 w:30",
+   "frames": 180,
+   "frame": 2150,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "RIGHT",
+     120
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 10,
+   "script": "w:60 snap",
+   "frames": 80,
+   "frame": 2230,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 11,
+   "script": "mash:A:20 w:120",
+   "frames": 460,
+   "frame": 2690,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ],
+    [
+     16,
+     "A",
+     6
+    ],
+    [
+     32,
+     "A",
+     6
+    ],
+    [
+     48,
+     "A",
+     6
+    ],
+    [
+     64,
+     "A",
+     6
+    ],
+    [
+     80,
+     "A",
+     6
+    ],
+    [
+     96,
+     "A",
+     6
+    ],
+    [
+     112,
+     "A",
+     6
+    ],
+    [
+     128,
+     "A",
+     6
+    ],
+    [
+     144,
+     "A",
+     6
+    ],
+    [
+     160,
+     "A",
+     6
+    ],
+    [
+     176,
+     "A",
+     6
+    ],
+    [
+     192,
+     "A",
+     6
+    ],
+    [
+     208,
+     "A",
+     6
+    ],
+    [
+     224,
+     "A",
+     6
+    ],
+    [
+     240,
+     "A",
+     6
+    ],
+    [
+     256,
+     "A",
+     6
+    ],
+    [
+     272,
+     "A",
+     6
+    ],
+    [
+     288,
+     "A",
+     6
+    ],
+    [
+     304,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 12,
+   "script": "RIGHT:40 w:30",
+   "frames": 100,
+   "frame": 2790,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "RIGHT",
+     40
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 13,
+   "script": "A w:120 snap",
+   "frames": 156,
+   "frame": 2946,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 14,
+   "script": "w:90 RIGHT:30 w:60",
+   "frames": 210,
+   "frame": 3156,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     90,
+     "RIGHT",
+     30
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 15,
+   "script": "A w:150",
+   "frames": 186,
+   "frame": 3342,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 16,
+   "script": "w:120 snap",
+   "frames": 140,
+   "frame": 3482,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 17,
+   "script": "RIGHT:150 snap",
+   "frames": 180,
+   "frame": 3662,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "RIGHT",
+     150
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 18,
+   "script": "RIGHT+A:30 RIGHT+B:60 RIGHT+A:30 RIGHT:60 snap",
+   "frames": 240,
+   "frame": 3902,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "RIGHT+A",
+     30
+    ],
+    [
+     40,
+     "RIGHT+B",
+     60
+    ],
+    [
+     110,
+     "RIGHT+A",
+     30
+    ],
+    [
+     150,
+     "RIGHT",
+     60
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 19,
+   "script": "RIGHT+B:90 RIGHT+A:25 RIGHT+B:60 snap",
+   "frames": 225,
+   "frame": 4127,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "RIGHT+B",
+     90
+    ],
+    [
+     100,
+     "RIGHT+A",
+     25
+    ],
+    [
+     135,
+     "RIGHT+B",
+     60
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 20,
+   "script": "RIGHT+B:120 RIGHT+A:30 RIGHT+B:90 snap",
+   "frames": 290,
+   "frame": 4417,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "RIGHT+B",
+     120
+    ],
+    [
+     130,
+     "RIGHT+A",
+     30
+    ],
+    [
+     170,
+     "RIGHT+B",
+     90
+    ]
+   ],
+   "touches": []
+  }
+ ]
+}

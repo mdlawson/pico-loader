@@ -1,0 +1,88 @@
+{
+ "game": "sm64",
+ "rom": "sm64/Super Mario 64 DS (USA).nds",
+ "sd": null,
+ "dsi": false,
+ "pico": null,
+ "save": "game.sav",
+ "frame": 3420,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 1,
+   "script": "w:120 snap",
+   "frames": 140,
+   "frame": 440,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 2,
+   "script": "t:128,96:10 w:120 snap",
+   "frames": 160,
+   "frame": 600,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 3,
+   "script": "w:180 snap",
+   "frames": 200,
+   "frame": 800,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 4,
+   "script": "t:128,96:10 w:120 snap",
+   "frames": 160,
+   "frame": 960,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 5,
+   "script": "t:128,165:10 w:120 t:44,65:10 w:240 snap",
+   "frames": 420,
+   "frame": 1380,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 6,
+   "script": "t:128,96:10 w:120 t:128,96:10 w:200 mash:A:10 w:200 mash:A:10 w:200 snap",
+   "frames": 1100,
+   "frame": 2480,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 7,
+   "script": "mash:A:10 w:150 mash:A:10 w:120 snap",
+   "frames": 610,
+   "frame": 3090,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 8,
+   "script": "UP:40 w:30 snap",
+   "frames": 100,
+   "frame": 3190,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 9,
+   "script": "LEFT:60 w:30 snap",
+   "frames": 120,
+   "frame": 3310,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  },
+  {
+   "n": 10,
+   "script": "DOWN+RIGHT:60 w:20 snap",
+   "frames": 110,
+   "frame": 3420,
+   "img": "a149467c96686248a7da65089a23cc431ce00940"
+  }
+ ]
+}

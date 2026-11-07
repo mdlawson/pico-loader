@@ -1,0 +1,59 @@
+{
+ "game": "st",
+ "rom": "st/Legend of Zelda, The - Spirit Tracks (USA) (En,Fr,Es) (Rev 1).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 1056,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "2fbd9be2ef47ffea216191952b719df2ed74a999"
+  },
+  {
+   "n": 1,
+   "script": "w:240",
+   "frames": 260,
+   "frame": 560,
+   "img": "2fbd9be2ef47ffea216191952b719df2ed74a999",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "w:300",
+   "frames": 320,
+   "frame": 880,
+   "img": "2fbd9be2ef47ffea216191952b719df2ed74a999",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 3,
+   "script": "w:120",
+   "frames": 140,
+   "frame": 1020,
+   "img": "2fbd9be2ef47ffea216191952b719df2ed74a999",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 4,
+   "script": "START",
+   "frames": 36,
+   "frame": 1056,
+   "img": "2fbd9be2ef47ffea216191952b719df2ed74a999",
+   "keys": [
+    [
+     0,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  }
+ ]
+}

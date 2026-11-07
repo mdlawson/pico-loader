@@ -1,0 +1,343 @@
+{
+ "game": "mph",
+ "rom": "mph/Metroid Prime - Hunters (USA) (Rev 1).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 6242,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8"
+  },
+  {
+   "n": 1,
+   "script": "w:180 snap",
+   "frames": 200,
+   "frame": 500,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 760,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 3,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 1080,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 4,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 1400,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 5,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 1720,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 6,
+   "script": "w:300 snap START w:120 snap",
+   "frames": 456,
+   "frame": 2176,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [
+    [
+     300,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 7,
+   "script": "w:120 START w:120 snap",
+   "frames": 276,
+   "frame": 2452,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [
+    [
+     120,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 8,
+   "script": "w:60 t:128,96 w:120 snap",
+   "frames": 230,
+   "frame": 2682,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": [
+    [
+     60,
+     128,
+     96,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 9,
+   "script": "t:84,73 w:120 snap",
+   "frames": 170,
+   "frame": 2852,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     84,
+     73,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 10,
+   "script": "t:47,73 w:120 snap",
+   "frames": 170,
+   "frame": 3022,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     47,
+     73,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 11,
+   "script": "t:28,85 w:180 snap",
+   "frames": 230,
+   "frame": 3252,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     28,
+     85,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 12,
+   "script": "t:47,73 w:240 snap",
+   "frames": 290,
+   "frame": 3542,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     47,
+     73,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 13,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 3802,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 14,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 4122,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 15,
+   "script": "mash:A:15 w:120 snap",
+   "frames": 380,
+   "frame": 4502,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ],
+    [
+     16,
+     "A",
+     6
+    ],
+    [
+     32,
+     "A",
+     6
+    ],
+    [
+     48,
+     "A",
+     6
+    ],
+    [
+     64,
+     "A",
+     6
+    ],
+    [
+     80,
+     "A",
+     6
+    ],
+    [
+     96,
+     "A",
+     6
+    ],
+    [
+     112,
+     "A",
+     6
+    ],
+    [
+     128,
+     "A",
+     6
+    ],
+    [
+     144,
+     "A",
+     6
+    ],
+    [
+     160,
+     "A",
+     6
+    ],
+    [
+     176,
+     "A",
+     6
+    ],
+    [
+     192,
+     "A",
+     6
+    ],
+    [
+     208,
+     "A",
+     6
+    ],
+    [
+     224,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 16,
+   "script": "t:234,183 w:180 snap",
+   "frames": 230,
+   "frame": 4732,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     234,
+     183,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 17,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 4992,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 18,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 5312,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 19,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 5632,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 20,
+   "script": "t:35,158:20 w:300 snap",
+   "frames": 350,
+   "frame": 5982,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     35,
+     158,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 21,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 6242,
+   "img": "e643b5cba27d3958331f061dce4d305ac1b56534",
+   "keys": [],
+   "touches": []
+  }
+ ]
+}

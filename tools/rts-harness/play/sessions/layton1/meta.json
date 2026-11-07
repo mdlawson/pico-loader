@@ -1,0 +1,263 @@
+{
+ "game": "layton",
+ "rom": "layton/Professor Layton and the Curious Village (USA, Australia).nds",
+ "sd": null,
+ "dsi": false,
+ "pico": null,
+ "save": "game.sav",
+ "frame": 12438,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 1,
+   "script": "w:120 snap",
+   "frames": 140,
+   "frame": 440,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 2,
+   "script": "w:180 snap",
+   "frames": 200,
+   "frame": 640,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 3,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 900,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 4,
+   "script": "A w:90 snap",
+   "frames": 126,
+   "frame": 1026,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 5,
+   "script": "mash:A:10 w:120 snap",
+   "frames": 300,
+   "frame": 1326,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 6,
+   "script": "t:132,72:10 w:120 snap",
+   "frames": 160,
+   "frame": 1486,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 7,
+   "script": "w:150 snap",
+   "frames": 170,
+   "frame": 1656,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 8,
+   "script": "drag:55,65,55,130:20 drag:55,100,100,100:20 snap",
+   "frames": 82,
+   "frame": 1738,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 9,
+   "script": "t:220,173:10 w:150 snap",
+   "frames": 190,
+   "frame": 1928,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 10,
+   "script": "w:120 t:128,150:10 w:120 snap",
+   "frames": 280,
+   "frame": 2208,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 11,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 695,
+   "frame": 2903,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 12,
+   "script": "w:120 snap",
+   "frames": 140,
+   "frame": 3043,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 13,
+   "script": "t:128,150:5 w:90 t:128,150:5 w:90 t:128,150:5 w:90 snap",
+   "frames": 335,
+   "frame": 3378,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 14,
+   "script": "t:128,150:5 w:90 t:128,150:5 w:90 t:128,150:5 w:120 snap",
+   "frames": 365,
+   "frame": 3743,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 15,
+   "script": "t:128,150:5 w:90 t:128,150:5 w:90 t:128,150:5 w:90 t:128,150:5 w:120 snap",
+   "frames": 470,
+   "frame": 4213,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 16,
+   "script": "t:128,150:5 w:90 t:128,150:5 w:90 t:128,150:5 w:90 t:128,150:5 w:120 snap",
+   "frames": 470,
+   "frame": 4683,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 17,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 620,
+   "frame": 5303,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 18,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 620,
+   "frame": 5923,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 19,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 695,
+   "frame": 6618,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 20,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 770,
+   "frame": 7388,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 21,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 845,
+   "frame": 8233,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 22,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 920,
+   "frame": 9153,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 23,
+   "script": "t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 t:128,150:5 w:60 snap",
+   "frames": 920,
+   "frame": 10073,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 24,
+   "script": "t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 t:128,150:3 w:30 snap",
+   "frames": 579,
+   "frame": 10652,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 25,
+   "script": "drag:100,118,140,118:15 drag:140,118,140,153:15 drag:140,153,100,153:15 drag:100,153,100,118:15 snap",
+   "frames": 124,
+   "frame": 10776,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 26,
+   "script": "t:220,362:10 w:120 snap",
+   "frames": 160,
+   "frame": 10936,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 27,
+   "script": "t:220,169:10 w:120 snap",
+   "frames": 160,
+   "frame": 11096,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 28,
+   "script": "t:220,9:10 w:120 snap",
+   "frames": 160,
+   "frame": 11256,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 29,
+   "script": "t:88,147:10 w:120 snap",
+   "frames": 160,
+   "frame": 11416,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 30,
+   "script": "t:230,9:10 w:90 snap",
+   "frames": 130,
+   "frame": 11546,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 31,
+   "script": "drag:40,50,120,60:25 snap t:220,169:10 w:120 snap",
+   "frames": 196,
+   "frame": 11742,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 32,
+   "script": "t:200,172:30 w:150 snap",
+   "frames": 210,
+   "frame": 11952,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 33,
+   "script": "t:223,55:10 w:30 drag:28,118,92,118:20 drag:92,118,92,162:20 drag:92,162,28,162:20 drag:28,162,28,118:20 w:20 snap",
+   "frames": 214,
+   "frame": 12166,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 34,
+   "script": "t:223,55:10 w:30 B w:60 snap",
+   "frames": 146,
+   "frame": 12312,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  },
+  {
+   "n": 35,
+   "script": "START w:90 snap",
+   "frames": 126,
+   "frame": 12438,
+   "img": "585f9c3b73081d98be0f9d0fe24f5a08d8986ca9"
+  }
+ ]
+}

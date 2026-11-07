@@ -4,7 +4,7 @@ This branch (`rts-freeze-test`) adds real-time save states to Pico Loader for th
 L+R+Up+Select in a game for a menu that saves, loads, switches mode, or exits to the launcher.
 This directory holds what's needed to keep testing it in melonDS on more games: a headless
 emulator harness, the melonDS patches it needs, the test launcher, and the notes for playing games
-by agent. ROMs, BIOS/firmware and the multi-GB play snapshots are not included; see "What you supply".
+by agent. ROMs, BIOS/firmware and the multi-GB play snapshots are not included (the play sessions are, as inputs); see "What you supply".
 
 ```
 tools/rts-harness/
@@ -16,6 +16,9 @@ tools/rts-harness/
   melonds-patches/     3 patches on upstream melonDS 1e65444, plus how to build
   launcher/            the tiny launcher.nds the loader boots on exit (source + prebuilt)
   play/PLAYING.md      instructions for an agent playing a game through play.py
+  play/sessions/       the 16 played sessions as inputs + starting saves (replayable)
+  play/saves/          in-game saves exported from them
+  BUILD_NOTES.txt      per-build notes as delivered, builds 13-33
 ```
 
 ## What you supply
@@ -149,7 +152,18 @@ snapshot plus the SD image) under `$PLAYROOT/<session>/checkpoints/`. Then:
   with a different loader build, then tests there. Use this after changing the loader.
 
 Games known to play.py are in its `GAMES` dict (ids → ROM under `$ROMS`); add new ones there.
-The ~11 GB of checkpoints from this work were left behind; new sessions start from scratch.
+
+**The sessions played so far** (16 games, 200 checkpoints) are in `play/sessions/` without their
+snapshots: each has its inputs (`meta.json`), its checkpoints' frames (`checkpoints/*/info.json`)
+and the save it started from. `play.py restore all` sets them up under `$PLAYROOT` (skipping games
+whose ROM isn't in `$ROMS`), and then `replayall.sh` rebuilds and tests every scene from a cold
+boot. Replays need the same patched melonDS and should use the same kind of BIOS/firmware dumps;
+checked here for pkd1 (all 9 scenes reached, 0-5 screens differing). A restored session is
+replay-only: `step`/`undo`/`rtscheck.sh` need snapshots, which a fresh `new` session makes.
+`play/saves/` holds in-game saves exported from those sessions (`new ... --save FILE` starts there).
+
+`BUILD_NOTES.txt` is the tester-facing history of builds 13-33: what changed, what was measured,
+the known gaps at each point.
 
 ## Other scripts
 

@@ -1,0 +1,41 @@
+{
+ "game": "nsmb",
+ "rom": "nsmb/New Super Mario Bros. (USA).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 536,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133"
+  },
+  {
+   "n": 1,
+   "script": "w:180",
+   "frames": 200,
+   "frame": 500,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "START",
+   "frames": 36,
+   "frame": 536,
+   "img": "caeb5d1684cbb53787bb212b2dadff7ff2a3b133",
+   "keys": [
+    [
+     0,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  }
+ ]
+}

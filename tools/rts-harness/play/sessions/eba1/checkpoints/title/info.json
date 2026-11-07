@@ -1,0 +1,101 @@
+{
+ "game": "eba",
+ "rom": "eba/Elite Beat Agents (USA).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 1288,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "8c0feb9198fb9747720bd15ddb4f308015afda74"
+  },
+  {
+   "n": 1,
+   "script": "w:60 A w:120",
+   "frames": 216,
+   "frame": 516,
+   "img": "8c0feb9198fb9747720bd15ddb4f308015afda74",
+   "keys": [
+    [
+     60,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "t:128,96 w:90 START w:120",
+   "frames": 276,
+   "frame": 792,
+   "img": "8c0feb9198fb9747720bd15ddb4f308015afda74",
+   "keys": [
+    [
+     120,
+     "START",
+     6
+    ]
+   ],
+   "touches": [
+    [
+     0,
+     128,
+     96,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 3,
+   "script": "START w:120",
+   "frames": 156,
+   "frame": 948,
+   "img": "8c0feb9198fb9747720bd15ddb4f308015afda74",
+   "keys": [
+    [
+     0,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 4,
+   "script": "t:128,120 w:120",
+   "frames": 170,
+   "frame": 1118,
+   "img": "8c0feb9198fb9747720bd15ddb4f308015afda74",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     128,
+     120,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 5,
+   "script": "t:135,66 w:120",
+   "frames": 170,
+   "frame": 1288,
+   "img": "8c0feb9198fb9747720bd15ddb4f308015afda74",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     135,
+     66,
+     20
+    ]
+   ]
+  }
+ ]
+}

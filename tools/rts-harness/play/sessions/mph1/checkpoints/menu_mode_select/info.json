@@ -1,0 +1,108 @@
+{
+ "game": "mph",
+ "rom": "mph/Metroid Prime - Hunters (USA) (Rev 1).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 2682,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8"
+  },
+  {
+   "n": 1,
+   "script": "w:180 snap",
+   "frames": 200,
+   "frame": 500,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 760,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 3,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 1080,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 4,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 1400,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 5,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 1720,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 6,
+   "script": "w:300 snap START w:120 snap",
+   "frames": 456,
+   "frame": 2176,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [
+    [
+     300,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 7,
+   "script": "w:120 START w:120 snap",
+   "frames": 276,
+   "frame": 2452,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [
+    [
+     120,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 8,
+   "script": "w:60 t:128,96 w:120 snap",
+   "frames": 230,
+   "frame": 2682,
+   "img": "5d3031ada7c6f9f5229609c2a01388e835bbace8",
+   "keys": [],
+   "touches": [
+    [
+     60,
+     128,
+     96,
+     20
+    ]
+   ]
+  }
+ ]
+}

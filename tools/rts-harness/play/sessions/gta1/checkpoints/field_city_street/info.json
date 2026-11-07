@@ -1,0 +1,320 @@
+{
+ "game": "gta",
+ "rom": "gta/Grand Theft Auto - Chinatown Wars (USA) (En,Fr,De,Es,It).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 4269,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "85f090a1dd86454bdf25d195fc05fa8db8fc639a"
+  },
+  {
+   "n": 1,
+   "script": "w:120",
+   "frames": 140,
+   "frame": 440,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "w:60 A:5 w:60",
+   "frames": 155,
+   "frame": 595,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [
+    [
+     60,
+     "A",
+     5
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 3,
+   "script": "w:180",
+   "frames": 200,
+   "frame": 795,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 4,
+   "script": "w:120 snap",
+   "frames": 140,
+   "frame": 935,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 5,
+   "script": "w:60 A:5 w:120 snap",
+   "frames": 215,
+   "frame": 1150,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [
+    [
+     60,
+     "A",
+     5
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 6,
+   "script": "w:90 snap",
+   "frames": 110,
+   "frame": 1260,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 7,
+   "script": "START w:90 snap",
+   "frames": 126,
+   "frame": 1386,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [
+    [
+     0,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 8,
+   "script": "w:180 snap",
+   "frames": 200,
+   "frame": 1586,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 9,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 1846,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 10,
+   "script": "w:60 START w:120 snap",
+   "frames": 216,
+   "frame": 2062,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [
+    [
+     60,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 11,
+   "script": "t:42,148:20 w:120 snap",
+   "frames": 170,
+   "frame": 2232,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     42,
+     148,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 12,
+   "script": "t:100,78:20 w:120 snap",
+   "frames": 170,
+   "frame": 2402,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": [
+    [
+     0,
+     100,
+     78,
+     20
+    ]
+   ]
+  },
+  {
+   "n": 13,
+   "script": "w:120 snap",
+   "frames": 140,
+   "frame": 2542,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 14,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 2802,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 15,
+   "script": "mash:A:15 w:120 snap",
+   "frames": 380,
+   "frame": 3182,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ],
+    [
+     16,
+     "A",
+     6
+    ],
+    [
+     32,
+     "A",
+     6
+    ],
+    [
+     48,
+     "A",
+     6
+    ],
+    [
+     64,
+     "A",
+     6
+    ],
+    [
+     80,
+     "A",
+     6
+    ],
+    [
+     96,
+     "A",
+     6
+    ],
+    [
+     112,
+     "A",
+     6
+    ],
+    [
+     128,
+     "A",
+     6
+    ],
+    [
+     144,
+     "A",
+     6
+    ],
+    [
+     160,
+     "A",
+     6
+    ],
+    [
+     176,
+     "A",
+     6
+    ],
+    [
+     192,
+     "A",
+     6
+    ],
+    [
+     208,
+     "A",
+     6
+    ],
+    [
+     224,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 16,
+   "script": "w:300 snap",
+   "frames": 320,
+   "frame": 3502,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 17,
+   "script": "A w:60 START w:60 t:128,96:5 w:120 snap",
+   "frames": 307,
+   "frame": 3809,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ],
+    [
+     76,
+     "START",
+     6
+    ]
+   ],
+   "touches": [
+    [
+     152,
+     128,
+     96,
+     5
+    ]
+   ]
+  },
+  {
+   "n": 18,
+   "script": "w:180 snap",
+   "frames": 200,
+   "frame": 4009,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 19,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 4269,
+   "img": "b7d9377531d72415a7c3a41480280828142aacd1",
+   "keys": [],
+   "touches": []
+  }
+ ]
+}

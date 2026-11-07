@@ -1,0 +1,503 @@
+Build notes for the RTS test builds delivered to the user (DSpico), newest first.
+Each build's README carried the notes of the builds before it; this is build 33's, the last one,
+kept as written for the tester. It records what changed per build, what was measured in melonDS
+and on hardware, and the known gaps at each point. Patch numbers refer to the series as delivered
+(0001..0048 on top of rasalopa's enhanced-v1.0.0); the same changes are this branch's commits.
+After build 33 the branch was rebased (no functional change) and tools/rts-harness was added.
+
+================================================================================================
+Pico Loader Enhanced + RTS save state test (DSpico build 33)
+Unofficial test build of rasalopa/pico-loader enhanced-v1.0.0 plus local commits.
+Not from the LNH team or rasalopa; please don't report its problems to them.
+
+Changed since build 32: all three files in _pico (picoLoader9.bin,
+picoLoader7.bin, rtsmenu9.bin). States from build 32 load as before.
+
+New: RTS for games running in DSi mode (DSi-enhanced games on a DSi or 3DS).
+  - The combo (L+R+Up+Select) opens the menu in DSi mode too. Save, load and
+    Exit to launcher all work. Tested in melonDS (as a DSi) with Pokemon Black,
+    Mario vs. Donkey Kong: Mini-Land Mayhem and Solatorobo.
+  - Basic mode only for now: no register shadow in DSi mode yet. The menu
+    shows "Mode: basic (dsi mode)" and the Mode item does nothing there. Like
+    basic mode in DS mode, sound that was playing at the save stops after a
+    load until the game starts new sounds or music.
+  - DSi-mode states are separate files, <code>-<slot>-dsi.rts, about 18 MB
+    each (16 MB main memory plus the DSi's extra WRAM). A DS-mode state and a
+    DSi-mode state of the same game never mix; loading one in the other mode
+    says so. Saving takes longer than in DS mode (empty memory is skipped).
+  - Restore test in melonDS, all three games: the load check finds every
+    memory part identical. The 120 frames after a load: 0 screens differ in
+    Pokemon Black and MvDK, 1 frame in Solatorobo.
+  - The DSi-mode exit to the launcher needed two fixes. Retail DSi-mode games
+    lock the DSi's system configuration at boot, which left Pico Loader unable
+    to set the console up for the launcher after a reboot, so that lock is
+    patched out while the exit combo is in. The game's locked new-WRAM slots
+    are also released as it parks.
+  - rts_inspect.py doesn't read the new DSi-mode files yet.
+
+DS mode: the 20-game suite gives the same results as build 32. One caveat:
+Metroid Prime Hunters has a display glitch after loading a state saved at
+certain moments (about 24 frames with a wrong screen mode). Build 32 has it
+too; which save frames show it moved a little, so the suite's default point
+now hits it. It is not new in this build.
+
+Build 32 notes follow.
+
+
+Changed since build 31: only _pico/picoLoader9.bin. States from build 31
+should still load. The first boot of each game rescans its overlays.
+
+New:
+  - Golden Sun Dark Dawn gets the full register shadow (it was basic-only in
+    build 31). The game packs its overlays with its own LZ40 compression, so
+    the boot scan never saw the display writes in them; the loader now
+    unpacks each one before scanning. Its first overlay (700 KB) was also too
+    big for the shadow's site records, which left 41 of 146 sites unpatched.
+    In melonDS, from a played checkpoint in the story scroll: basic mode had
+    100 frames wrong after a load, the shadow 1. The other checkpoint and the
+    intro: 1-3 frames, same as basic. You can still switch it to basic in the
+    RTS menu. This applies to DS-only TWL SDK games generally (they run in DS
+    mode); DSi-mode games still have no RTS.
+  - Suite of 20 games otherwise unchanged (same differing frames as build 31).
+
+Build 31 notes follow.
+
+New:
+  - Per-game "basic" mode, like a DSTWO snapshot: the state keeps memory and
+    the registers that read back, and no game code is patched for the
+    register shadow. Switch it with the new "Mode" item in the RTS menu
+    (L+R+Up+Select); it applies from the next boot of that game. The setting
+    lives in /_pico/states/<game code>.cfg, a small text file the loader makes
+    on first boot ("mode=full" or "mode=basic"); you can also edit it on a PC.
+    Expect basic to give a few frames of wrong scroll/blend/window after a
+    load, longer in games that set those once per scene. In the emulator suite
+    most games were still 0-3 frames off, Zelda Spirit Tracks 17.
+  - Golden Sun Dark Dawn has an RTS menu now. It is built with the DSi (TWL)
+    SDK, whose interrupt dispatcher has a different shape, so the menu hook
+    never found it. It runs in basic mode only: the shadow scan misses most
+    of its display writes, and a half-filled shadow made loads worse (it
+    wrote back stale values), so the shadow stays off for TWL SDK games.
+    Tested only in its intro in melonDS: 3 frames differ after a load.
+    Also fixed for TWL SDK games that are DS-only (Golden Sun DD): the loader
+    read their autoload list in the DSi format and hung when anything walked
+    it.
+  - The menu checks that the shadow's memory (borrowed from the ARM7's main
+    arena) is still its own before trusting it. If a game ever moves its heap
+    over it, loads fall back to basic and the menu says "Shadow memory taken:
+    basic loads". In all 15 games measured, the ARM7 never allocated anything
+    from that arena after boot; the least room left above the shadow was
+    8.7 KB (Pokemon Diamond).
+
+Measured (no change needed): how often the shadow's stubs run. Over 198
+gameplay scenes (300 frames each): median 4 stub hits per frame, mean 7.7.
+Busiest steady cases are per-scanline effects: Advance Wars' shop 147/frame,
+GTA's smash minigame ~78/frame with a 389 burst. Rough cost at the busiest is
+1-3% of the ARM9 for a frame. If a game ever shows tearing on a wavy/per-line
+effect with full mode but not basic, that's the place to look.
+
+Checked in melonDS: save/load suite on 20 game scenes in DS mode and 4 in DSi
+mode, 0-3 screens differing after a load (Advance Wars 9, its intro fade, as
+before).
+
+Known gaps:
+  - WarioWare DIY (NAND save) still has no RTS menu, on purpose.
+  - TWL SDK games: basic states only (see above).
+  - Lights set once per scene through 3D commands (DQ9 flying over the field)
+    still can't be restored.
+
+Build 30 notes follow.
+
+
+Changed since build 29: _pico/picoLoader9.bin only. States from build 29 should
+still load. The first boot of each game rescans its overlays.
+
+Found with 8 more games (New Super Mario Bros., Metroid Prime Hunters, Elite
+Beat Agents, GTA Chinatown Wars, Zelda Spirit Tracks, Dragon Quest IX, Golden
+Sun Dark Dawn, WarioWare DIY), played by agents to ~120 more scenes:
+  - New Super Mario Bros. and Metroid Prime Hunters had no RTS menu at all.
+    They are clone boot roms, and only 0x500 bytes of their free .parent
+    section went to the patch heap, which the other patches fill. Now all of
+    the free tail goes to it.
+  - SDK 3 games (NSMB, MPH) never had their FS_StartOverlay hooked, so a
+    freshly loaded overlay's display stores were only shadowed from the next
+    vblank. A store in that gap was lost: NSMB's World 1 map came back with
+    the wrong BG1 scroll after a load. SDK 3's FS_StartOverlay is now found.
+  - When the shadow's space is short, the overlays' stub slots can now go to
+    the patch heap's leftover zeros. NSMB: 202 -> 304 of 339 sites.
+  - Dragon Quest IX's outlines came back black after a load: its edge colours
+    are set through a copy routine compiled in a form the scan didn't see as
+    a loop. Fixed; DQ9 scenes went from all 120 test frames differing to a
+    few.
+
+Known gaps:
+  - Golden Sun Dark Dawn (SDK 5) and WarioWare DIY (NAND save, left out of
+    the exit combo on purpose) have no RTS menu.
+  - Lights set once per scene through 3D commands (DQ9 flying over the
+    field) can't be read back or shadowed yet: lighting differs after a load.
+
+Build 29 notes follow.
+
+Changed since build 28: _pico/picoLoader9.bin only. States from build 28 should
+still load. The first boot of each game rescans its overlays.
+
+Found by playing further into games (an emulator harness where cheap agents
+played 9 games and marked ~90 scenes, then every scene got a save/load test):
+  - Chrono Trigger's opening (Crono's room): after a load the bottom screen
+    stayed dark with the wrong scroll. The overlay that sets it up didn't fit
+    in the stub space and was skipped. Overlay site records now take 2 bytes
+    instead of 8, and when space is still short the biggest overlays are
+    skipped first. Chrono Trigger: 8 -> 12 of 15 overlays, 217 -> 311 sites.
+  - Pokemon Diamond's name entry screen lost its scroll after a load: a
+    common Thumb setter shape couldn't be patched. Now it can (Pokemon's
+    static Thumb sites skipped: 45 -> 30).
+  Known left: Chrono Trigger's main menu and item screens can come back with
+  the wrong scroll for a moment after a load (their overlay still doesn't fit).
+
+Checked in melonDS, DS and DSi modes:
+  - Save/load suite: screens differing after a load 0-3 in every game, game
+    saves byte-identical.
+  - The overlay stubs inspected in live memory: every loaded overlay's sites
+    branch to their own slot with the right stub there.
+  - Soak test: 10 minutes of random input per game, starting from real save
+    files, 9 games, with and without the shadow: no crashes, hangs or frozen
+    screens either way.
+  - Every register the save reads back was checked against GBATEK: all are
+    readable on hardware (the DMA ones too, which the new DMA shadow needs).
+
+(Build 27's notes follow.)
+
+Pico Loader Enhanced + RTS save state test (DSpico build 27)
+Unofficial test build of rasalopa/pico-loader enhanced-v1.0.0 plus local commits.
+Not from the LNH team or rasalopa; please don't report its problems to them.
+
+Changed since build 26: _pico/picoLoader7.bin and _pico/rtsmenu9.bin
+(picoLoader9.bin is the same). States from build 26 load in this one.
+
+IMPORTANT FOR DSi (and 3DS) USERS: on a DSi, every build so far loaded states
+without restoring the display registers the DS can't read back (scroll,
+affine, windows, blend, 3D fog/edge/toon). The loader told the game where
+those saved values live only in a copy of its info block that a DS-mode game
+on a DSi can't see (on a DS both copies are the same memory, which is why
+testing missed it). Effects on a DSi: after a load from a different scene,
+wrong scrolling, missing or misplaced layers, wrong fades or blending. The
+same slip also let a load write over the ARM7 patch space in main memory.
+
+With the fix, melonDS in DSi mode now matches DS mode: screens differing
+after a load went from 120 of 120 to 0-3 (Layton, SM64, Phantom Hourglass)
+and from 34-50 to 1-2 (Advance Wars, M&L, Rocket Slime). Game saves stayed
+byte-identical. Anything you saw on the DSi with build 26 or older is worth
+trying again with this one.
+
+Also fixed: a state's header recorded the menu's memory permissions instead
+of the game's (only the self-check reads it).
+
+(Build 26's notes follow.)
+
+
+Changed since build 25: _pico/picoLoader9.bin, _pico/picoLoader7.bin and
+_pico/rtsmenu9.bin (copy all three), rts_inspect.py, patches 0032-0036.
+
+READ FIRST:
+  - States saved with build 25 or older don't load in this one (the menu
+    says so). Save new ones.
+  - The menu file may now be up to 40 KB, and the loader remakes
+    _pico/rtsstash.bin at 232 KB on the first boot. Both happen by themselves.
+  - Each game gets a small file next to its states, _pico/states/XXXX.shd
+    (a few KB). See "Boot" below. Deleting it is safe: it gets remade.
+
+Saving and loading are faster:
+  - A save no longer writes the 2 KB blocks of main memory that are all
+    zero. It keeps a map of them, and a load fills those blocks with zero
+    instead of reading them. The DSpico writes one sector per card command,
+    so writing less is the only way to save faster. In the test games
+    27-72% of main memory is skipped (M&L 72%, Chrono Trigger 66%,
+    Layton 61%, SM64 50%, Rocket Slime 49%, Pokemon D 46%, Phantom Hourglass
+    31%, Advance Wars 30%, Castlevania 27%). Everything else (VRAM, WRAM,
+    registers) is about 1 MB and is still written in full. Expect roughly
+    half the old save time, less in the games with more zero memory. I
+    can't time it on the hardware; please tell me what you see.
+
+Boot:
+  - The overlay scan (build 24's boot slowdown) now runs only on the first
+    boot of a game. The result is kept in _pico/states/XXXX.shd, and later
+    boots read it instead: 1-2.5 s quicker in melonDS (Phantom Hourglass
+    2.4 s, Castlevania 2.0 s, SM64 1.9 s, Pokemon 1.5 s, M&L and CT 1.4 s),
+    and more on the card, where reading the overlays also takes time. The
+    file is used only while the loader, the rom file (size, date, header)
+    and the scan all match. A new loader build or a different rom just
+    scans again.
+
+Sound after a load:
+  - Looping channels (music, ambience) now carry on from where they were
+    when you saved, not from the top of the sample. The menu works out how
+    far into the loop each channel was and starts it at the next loop point
+    that matches, so the music is in step within a few samples. On the DS a
+    channel can only start from the top, so a channel that is mid-loop may be
+    quiet for up to one loop pass (usually well under a second).
+  - A one-shot sound that had already finished stays off instead of playing
+    again.
+
+Display registers written by DMA (Phantom Hourglass's fog table, an M&L
+engine B clear): the shadow now records what an immediate DMA writes into
+those registers, so a load puts them back too.
+
+Timers: the ARM7's timers (behind its OS tick and alarms, which drive
+sound) now stop while the menu is open and start again from their saved
+counts on the same scanline, so their phase holds after a load. Build 25's
+note that the ARM7 tick ran on from the running session's count no longer
+applies.
+
+Tested in melonDS with your dumps (load after filling the display registers
+with garbage, 2 s compared against an uninterrupted run): screens differing
+0-3 of 120 in every game. The ones that differ are frames 0-1 right after
+the resume. The save files (GAME.SAV) were byte-identical every time.
+
+(Build 25's notes follow.)
+
+Pico Loader Enhanced + RTS save state test (DSpico build 25)
+Unofficial test build of rasalopa/pico-loader enhanced-v1.0.0 plus local commits.
+Not from the LNH team or rasalopa; please don't report its problems to them.
+
+Changed since build 24: _pico/picoLoader9.bin and _pico/picoLoader7.bin.
+Only boot time changes: the overlay scan at boot is about twice as fast.
+In melonDS, Phantom Hourglass now shows its first frame about 2.7 s later
+than with build 23. Build 24 added about 10 s; its README said 7 s, which
+was wrong. Games with fewer overlays add much less. Saving, loading and
+sound work as in build 24, and states from build 24 load in this one.
+
+(Build 24's notes follow.)
+
+USE _pico/picoLoader9.bin THIS TIME, NOT THE CENSUS BUILD. The register
+shadow no longer needs the census or any traps, so the frame drops the census
+causes (Phantom Hourglass) are gone:
+  - At boot the loader scans the game's code, its overlays included, for
+    every store to a display register that can't be read back. It replaces
+    each one with a branch to a small stub that does the store and keeps a
+    copy of the value. Calls into the SDK's copy and fill routines that
+    target those registers get a wrapper that does the same. A store costs
+    tens of cycles more instead of a ~580-cycle trap, and only when the game
+    writes one of those registers.
+  - On a load the saved values go back, as with the census build.
+  - census-test/ is kept only to measure with; it doesn't have the new
+    shadow or the sound fix.
+
+Sound after a load: the ARM7's sound registers (each channel's sample
+address, pitch, loop start and length, the timer reloads, sound capture)
+can't be read back either. Until now a load stopped every channel and only
+new notes came back, so music and held sounds stayed silent (SM64 had no
+sound at all). The loader now shadows those on the ARM7 the same way. When
+the menu closes after a load, it starts the channels the state had playing
+again. They restart from the top of their sample, because the DS doesn't
+keep a playback position you can restore, so a held note or a streamed track
+can be out of step for a moment until the game moves on.
+
+Tested in melonDS with your dumps, loading after filling the display
+registers with garbage (as if loading from another scene). Screens that
+differ in the 2 s after the load: Rocket Slime (4 points) 1-2, SM64 1,
+Pokemon D 0, Layton 1, Chrono Trigger 0, M&L 1 (49 with build 23's
+shadow-less loader: its engine B affine and window registers), Castlevania
+1, Phantom Hourglass 2, Advance Wars 1. The one frame is the
+first frame after the resume.
+Sound level after a load against the reference: every game now within a few
+percent (it was 56-88% for Pokemon, Advance Wars, Phantom Hourglass and Rocket
+Slime, and 0 for SM64).
+
+Things to know:
+  - Booting takes longer: the loader reads and scans every overlay (see
+    build 25's note at the top for how long).
+  - Save new states with this build: states from build 23 or older don't
+    have the new shadows, so their display and sound registers stay as the
+    running session had them, which is the old behaviour.
+  - Not covered yet: a display register that only a DMA writes (Phantom
+    Hourglass's fog table, an engine B clear in M&L). Those keep the running
+    session's values after a load.
+  - The timer that drives the ARM7's OS tick runs on from the running
+    session's count. Nothing visible came of that in testing.
+
+
+Changed since build 22: _pico/picoLoader9.bin, _pico/rtsmenu9.bin and
+census-test/picoLoader9.bin (picoLoader7.bin is the same).
+
+The Rocket Slime text boxes (gone or shifted vertically after a load in the
+intro): the boxes are a background layer placed by its scroll registers, and
+the game sets its blend registers for the fade. The DS can't read either set
+back, so until now a load left them as the running session had them. That
+was right only when you loaded in the same scene you were playing.
+  - The census build now keeps a shadow of every register that can't be read
+    back: 2D scroll, affine, windows, mosaic, blend (both screens) and the 3D
+    settings (edge colors, fog, toon table, clear color). It records them as
+    the game writes them, and a load puts the saved session's values back.
+  - To keep that cheap, a store that keeps trapping without touching one of
+    those registers gets a small stub in place of the trap. In Rocket Slime
+    the cost drops from ~1300 traps a frame to ~6. Pokemon is ~190 and SM64
+    ~400 (busy display code). One trap costs ~580 ARM9 cycles, a frame ~1.1M.
+  - THE FIX IS ONLY IN census-test/picoLoader9.bin: copy it over
+    _pico/picoLoader9.bin. The census is what sees the writes. A state saved
+    with one build should be loaded with the same build.
+  - Also new in both builds: timer reloads and 3D matrices come back on a
+    load.
+
+Tested in melonDS with your dumps. The harness loads after filling those
+registers with garbage, to stand for loading from another scene. Screens
+that differ from the reference in the 2 s after the load:
+  Rocket Slime (4 points in the intro and after it) 1, SM64 0, Pokemon D 0,
+  Layton 0, Chrono Trigger 0, M&L 1, Castlevania 3, Phantom Hourglass 5.
+  Build 22 on the same test: Rocket Slime 48-119, most of the others 119.
+  Advance Wars differs in 76 frames: its intro reaches a scene change one
+  frame off. That's timing, not a register.
+Known gap: a game that loads a 3D table (fog, toon) by DMA instead of by
+the CPU isn't seen by the shadow (Phantom Hourglass's fog). Sound channels
+still don't restart after a load; that's next.
+Pokemon: build 22's census took more of the ARM7's memory than Pokemon has
+to spare, and the game hung at a black screen. The stub pool now sizes
+itself to what's free.
+
+
+Changed since build 21: census-test/picoLoader9.bin and rtsmenu9.bin
+(_pico/picoLoader9.bin only gains a log line; picoLoader7.bin is the same).
+Build 20's white screen is found and fixed, using melonDS run as a DSi with
+your BIOS dumps and the DSpico's card commands:
+  - On a DSi the loader keeps the DSi's own BIOS for the exit combo. Its
+    exception handler pushes onto a stack at 0x02FFFD9C before it turns the
+    protection unit off; the DS BIOS uses 0x027FFD9C, which DS games map.
+    No DS game maps 0x02FFFD9C, so the census's very first trapped write
+    faulted again inside the BIOS, forever: a white screen in every game,
+    on a DSi only. The census now maps that page for the BIOS (it reuses
+    protection region 2, the SDK's guard over the ARM7's corner).
+  - The DSpico's card read code resets protection region 3 on every ROM
+    read, the same region the census borrows for the IO registers, so the
+    census stopped at the first card read (on a DS too). Census builds no
+    longer do that while the census holds the region.
+  - The menu now says "Census: stopped (A: why)" when the census stopped,
+    instead of "traps on".
+In the emulated DSi, SM64DS and Advance Wars boot with the census on and it
+keeps counting. To try it, copy census-test/picoLoader9.bin over
+_pico/picoLoader9.bin. The census also traps the DSpico's own card writes, so
+loading screens are slower with it on; its numbers include that.
+On a DSi the counts also include the DSi BIOS's wait-for-interrupt routine,
+which writes two registers each time a game idles, so DSi numbers run higher
+than a DS's for the same game (Advance Wars: ~1700 a frame at most vs ~800).
+
+
+Changed since build 20: picoLoader9.bin. Build 20 white-screened at game
+launch. It was the first build where the census actually ran on hardware,
+so the census is the likely cause. _pico/picoLoader9.bin now has NO census
+(the exit combo, save states and test are as in build 18), and the census
+build is kept separately in census-test/picoLoader9.bin, the same as build
+20, for testing later. Please check that _pico/picoLoader9.bin launches games
+again: that confirms the census is what crashes.
+States from builds 10-16 load again with this build (the ARM7's memory is
+laid out as before); states from builds 17-20 may not.
+
+Changed since build 19: only picoLoader9.bin. Build 19 broke both hotkeys:
+its changes made the exit combo's pieces too big for the little room games
+leave for patches, and the loader then leaves the exit combo out entirely.
+The exit combo is back to build 18's size; the part that opens the ARM7's
+corner for the census is now a separate optional piece. If a game has no
+room for it, only the census is missing ("census at 00000000" in the
+report), and the hotkeys still work.
+
+Changed since build 18: picoLoader9.bin and rtsmenu9.bin (picoLoader7.bin is
+the same). The census should finally show up:
+  - Builds 17 and 18 looked for room in the ARM7's main memory arena below
+    0x023E0000. In these games that arena is in the ARM7's own corner at the
+    top of RAM (0x027F9E08 in Rocket Slime, ~20 KB, unused), which the
+    game's protection unit keeps from the ARM9, so there was never room.
+  - The census now takes 7 KB there, and the exit combo's vblank hook opens
+    that corner (protection region 2) for the ARM9 before calling it.
+  - Its code runs from the instruction cache but its counters are uncached
+    (the menu's SD buffer shares that memory), so the cost it measures is
+    somewhat higher than a final version would have: an upper bound.
+  - If it still doesn't show up, send the report (A on that item).
+Build 18's fixes stay: the ARM7 patch space address is kept in the rts info,
+and on a DS / DS Lite the census runs at the game's address.
+States from builds 17-18 load; older ones may not resume cleanly.
+
+THE CENSUS (DS games built with the normal Nintendo SDK; not DSi-enhanced ones)
+From boot, every ARM9 write to the first 8 KB of IO (2D, DMA, timers, 3D,
+etc.) traps, is done by a small handler and counted. It's a measurement: the
+game runs a little slower while it's on, and that slowdown is what we want to
+know.
+ 1. Boot a game and play normally. Try a calm scene (walking around, a menu)
+    and a busy one (a battle, lots of 3D, a cutscene).
+ 2. Open the menu (L+R+Up+Select), go down to "Census: traps on" and press A.
+    It writes a report to /_pico/rtslog.txt (section 5, "RTS register-write
+    census") covering the time since boot or the last report, and the counts
+    start again. The two lines under the menu give the short version: traps
+    per frame and the estimated cost.
+ 3. Start on that item turns the traps off/on, so you can feel or film the
+    difference in the same scene. While the menu is open the traps pause.
+ 4. A report per scene is ideal: open the menu and press A right after the
+    calm part, play the busy part, press A again (each report replaces the
+    last one in rtslog.txt, so send me the file in between, or note the
+    numbers from the screen).
+Good games for this: Advance Wars: Dual Strike (2D), Rocket Slime (2D with
+fades), Phantom Hourglass (3D, the worst case).
+
+The census stops by itself, and the report says why, if the game uses the
+GBA slot, changes the protection unit itself, or runs a store the handler
+doesn't know. Games keep running normally when it stops. If a game misbehaves
+only with this build, turn the traps off with Start and tell me which game.
+
+What the report holds: how many cycles one trap costs (measured at boot),
+traps per frame on average and in the busiest frame, the share of each frame
+that costs, how frames spread by trap count, and which code addresses and
+registers write most often.
+
+The restore test (from build 15) checks on the real DS that a load puts back
+what it should, and that the game then runs exactly as it did the first time.
+
+Install: copy the _pico folder's six files into /_pico on the DSpico's SD card.
+The DS ARM7 BIOS at /_pico/biosnds7.rom is still needed for encrypted roms.
+Each game now gets three 5 MB files in /_pico/states (<code>-1.rts is your
+save slot, -2 and -3 belong to the test), made on that game's first boot with
+this build, plus one shared /_pico/rtslog.txt.
+
+In a DS game:
+  L+R+Up+Select    (hold ~3/4 s)  the game pauses, the menu shows on top
+      let go of every key first, then
+      Up/Down       choose
+      A             Resume / Save state / Load state / Test: save + reference /
+                    Test: load + compare / Census (report) / Exit to launcher
+      Start         on the Census item: traps on/off
+      B             back to the game
+  L+R+Right+Select (hold ~3/4 s)  exit to the launcher directly, as before
+
+HOW TO RUN THE TEST (one game at a time)
+ 1. Get to a calm spot in the game: nothing you need to press for a few
+    seconds (standing in a room, a menu, a cutscene that plays by itself).
+ 2. Open the menu, choose "Test: save + reference". It saves slot 1 and the
+    game goes on. DON'T TOUCH ANYTHING: about 2 seconds later the game pauses
+    by itself, the menu writes slot 2 ("Reference saved to slot 2.").
+    Press B.
+ 3. Play on a bit, or go somewhere else. Then open the menu and choose
+    "Test: load + compare", and A again to confirm. It loads slot 1, checks
+    memory ("Checking memory..."), and the game goes on from the save.
+    DON'T TOUCH ANYTHING again: 2 seconds later it pauses by itself, writes
+    slot 3 and compares (about 10 seconds). Two lines show the result:
+      "Load check: ..."  did everything the load put back land and stay
+                         (memory before resuming, registers just after)
+      "Run: ..."         did the game do exactly the same in those 2 seconds
+                         as after the original save
+ 4. Send me /_pico/rtslog.txt (a text file; it holds the latest load check
+    and comparison, plus the ones before them, with addresses and values).
+
+Opening the menu yourself during either 2 second wait stops the test.
+Notes:
+  - "Run: ... differ" isn't automatically a bug: games that take randomness
+    from the clock or count real time will differ a little. Running step 3
+    twice tells those apart: a real restore gap differs the same way each time.
+  - The registers the DS can't read back (scroll, windows, fades, 3D settings)
+    can't be checked directly. If they matter the game shows it, as with Rocket
+    Slime's text boxes.
+
+Changed since build 13 (in build 14): IPC FIFO words kept and restored, the
+divider and square root units, IPC sync, and the ARM7's display status, SPI,
+sound capture and DMA on/off.
+
+menu-emulator.png is the menu after a test in the emulator. rts_inspect.py
+prints what a state file holds (python3 rts_inspect.py /path/to/XXXX-1.rts).
+
+Source changes: 0001..0022 patches, apply in order on top of enhanced-v1.0.0.
+The menu is in rtsmenu/ (make there). Its font is rendered from DejaVu Sans
+Mono (Bitstream Vera / DejaVu font license).

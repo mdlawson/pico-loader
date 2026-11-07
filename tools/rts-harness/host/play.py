@@ -9,6 +9,7 @@ snapshot, press the given inputs, save a new snapshot and a screenshot. Nothing 
   play.py step SESSION "SCRIPT"
       run SCRIPT from the current snapshot; prints the screenshot path(s)
   play.py undo SESSION [N]          go back N steps (default 1)
+  play.py restore SESSION|all [--force]  rebuild a packaged session (../play/sessions) for replay
   play.py mark SESSION LABEL        keep the current snapshot as a checkpoint
   play.py log SESSION               the steps so far
   play.py exportsave SESSION FILE   the game's own save file as it is now on the sd card
@@ -324,6 +325,33 @@ def main():
         shutil.rmtree(sd, ignore_errors=True)
         rp = out + "/report.txt"
         print(open(rp).read() if os.path.exists(rp) else "no report")
+    elif cmd == "restore":
+        # restore SESSION|all [--force]: set up a session from the snapshot-free copy in ../play/sessions
+        # (inputs, checkpoint frames, the starting save) so "replay" / replayall.sh can rebuild its scenes
+        pk = os.path.join(os.path.dirname(_HERE), "play", "sessions")
+        names = sorted(os.listdir(pk)) if sess == "all" else [sess]
+        for name in names:
+            src = os.path.join(pk, name); d = sdir(name)
+            if not os.path.exists(src + "/meta.json"): die("no packaged session " + name)
+            if os.path.exists(d):
+                if "--force" not in a: print("%s exists, skipped (--force replaces it)" % name); continue
+                shutil.rmtree(d)
+            m = json.load(open(src + "/meta.json"))
+            rom = m["rom"] if m["rom"].startswith("/") else os.path.join(ROMS, m["rom"])
+            if not os.path.exists(rom): print("%s: no rom %s, skipped" % (name, rom)); continue
+            sd = d + "/sd"; os.makedirs(sd + "/_pico")
+            try: os.link(rom, sd + "/game.nds")
+            except OSError: shutil.copy(rom, sd + "/game.nds")
+            shutil.copy(LAUNCHER, sd); open(sd + "/launch.txt", "w").write("/game.nds")
+            if os.path.exists(src + "/game.sav"): shutil.copy(src + "/game.sav", sd + "/game.sav")
+            for fn in os.listdir(PICO_DIR):
+                if os.path.isfile(os.path.join(PICO_DIR, fn)): shutil.copy(os.path.join(PICO_DIR, fn), sd + "/_pico/")
+            def fix(x): x["rom"] = rom; x["sd"] = sd; x["pico"] = PICO_DIR; return x
+            m = fix(m); m["save"] = sd + "/game.sav" if m.get("save") else None; save_meta(name, m)
+            for c in sorted(os.listdir(src + "/checkpoints")):
+                os.makedirs(d + "/checkpoints/" + c)
+                json.dump(fix(json.load(open(src + "/checkpoints/%s/info.json" % c))), open(d + "/checkpoints/%s/info.json" % c, "w"), indent=1)
+            print("%s: %d checkpoints (replay only: no snapshots)" % (name, len(os.listdir(src + "/checkpoints"))))
     elif cmd == "log":
         m = load_meta(sess)
         for s in m["steps"]: print("%4d  f%-7d %s" % (s["n"], s["frame"], s["script"]))

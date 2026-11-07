@@ -1,0 +1,83 @@
+{
+ "game": "dq9",
+ "rom": "dq9/Dragon Quest IX - Sentinels of the Starry Skies (USA) (En,Fr,Es).nds",
+ "dsi": false,
+ "pico": null,
+ "frame": 1412,
+ "sd": null,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "0ab419b5fc17dde4bfc907a369b1f40403ffeece"
+  },
+  {
+   "n": 1,
+   "script": "w:120",
+   "frames": 140,
+   "frame": 440,
+   "img": "0ab419b5fc17dde4bfc907a369b1f40403ffeece",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 2,
+   "script": "w:180 snap",
+   "frames": 200,
+   "frame": 640,
+   "img": "0ab419b5fc17dde4bfc907a369b1f40403ffeece",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 3,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 900,
+   "img": "0ab419b5fc17dde4bfc907a369b1f40403ffeece",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 4,
+   "script": "w:240 snap",
+   "frames": 260,
+   "frame": 1160,
+   "img": "0ab419b5fc17dde4bfc907a369b1f40403ffeece",
+   "keys": [],
+   "touches": []
+  },
+  {
+   "n": 5,
+   "script": "START w:90 snap",
+   "frames": 126,
+   "frame": 1286,
+   "img": "0ab419b5fc17dde4bfc907a369b1f40403ffeece",
+   "keys": [
+    [
+     0,
+     "START",
+     6
+    ]
+   ],
+   "touches": []
+  },
+  {
+   "n": 6,
+   "script": "A w:90 snap",
+   "frames": 126,
+   "frame": 1412,
+   "img": "0ab419b5fc17dde4bfc907a369b1f40403ffeece",
+   "keys": [
+    [
+     0,
+     "A",
+     6
+    ]
+   ],
+   "touches": []
+  }
+ ]
+}

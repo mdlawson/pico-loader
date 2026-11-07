@@ -1,0 +1,102 @@
+{
+ "game": "aw",
+ "rom": "aw/Advance Wars - Dual Strike (USA, Australia).nds",
+ "sd": null,
+ "dsi": false,
+ "pico": null,
+ "save": "game.sav",
+ "frame": 2822,
+ "steps": [
+  {
+   "n": 0,
+   "script": "(boot)",
+   "frames": 300,
+   "frame": 300,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 1,
+   "script": "w:300 A w:150 t:128,95 w:120 snap",
+   "frames": 636,
+   "frame": 936,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 2,
+   "script": "t:112,97 w:120 snap",
+   "frames": 170,
+   "frame": 1106,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 3,
+   "script": "t:125,85 w:120 snap",
+   "frames": 170,
+   "frame": 1276,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 4,
+   "script": "t:125,85 w:120 snap",
+   "frames": 170,
+   "frame": 1446,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 5,
+   "script": "B w:90 snap",
+   "frames": 126,
+   "frame": 1572,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 6,
+   "script": "B w:80 B w:90 snap",
+   "frames": 222,
+   "frame": 1794,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 7,
+   "script": "t:125,73 w:120 snap",
+   "frames": 170,
+   "frame": 1964,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 8,
+   "script": "t:125,85 w:120 snap",
+   "frames": 170,
+   "frame": 2134,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 9,
+   "script": "B w:80 B w:90 snap",
+   "frames": 222,
+   "frame": 2356,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 10,
+   "script": "START w:90 snap",
+   "frames": 126,
+   "frame": 2482,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 11,
+   "script": "t:240,143:20 w:120 snap",
+   "frames": 170,
+   "frame": 2652,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  },
+  {
+   "n": 12,
+   "script": "t:137,38 w:120 snap",
+   "frames": 170,
+   "frame": 2822,
+   "img": "919c823cbda2cf535ac339d916511e041f460b14"
+  }
+ ]
+}
