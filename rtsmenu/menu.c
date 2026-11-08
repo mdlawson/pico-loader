@@ -472,10 +472,13 @@ static u32 autopilot(void* block, volatile rts_info_t* rts)
             rts->testFrames = ap->gapFrames ? ap->gapFrames : 1;
             return RTS_MENU_STATE_RESUME;
         }
+        // back to the game, and the arm7 asks for the exit the way the exit combo
+        // does: on a DSi the autopilot build's exit from this menu hangs in the
+        // reboot (the release build's doesn't; not understood yet)
         ap->step = RTS_AUTOPILOT_DONE;
         for (int i = 0; i < 60; i++) // a second to read it, for whoever watches
             waitVBlank();
-        return RTS_MENU_STATE_EXIT;
+        return RTS_MENU_STATE_RESUME;
     }
     if (ap->step == RTS_AUTOPILOT_SAVE)
     {

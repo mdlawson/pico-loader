@@ -833,6 +833,17 @@ autopilotTick:
     beq 9f
     mov r3, #0 // the keys pressed
     ldrh r0, [r4, #10] // step
+    cmp r0, #3 // DONE: leave as the exit combo does (the menu's exit hangs a dsi here)
+    bne 6f
+    mov r0, #4 // EXITING
+    strh r0, [r4, #10]
+    adrl r12, holdCounter
+    ldr r0, comboMagic
+    str r0, [r12, #20] // requestKind
+    mov r0, #1
+    str r0, [r12, #4] // requestFrames
+    b 7f
+6:
     cmp r0, #0 // PLAY
     bne 7f
     ldr r6, apFrame

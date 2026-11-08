@@ -83,7 +83,8 @@ typedef struct
 #define RTS_AUTOPILOT_PLAY      0
 #define RTS_AUTOPILOT_SAVE      1
 #define RTS_AUTOPILOT_LOAD      2
-#define RTS_AUTOPILOT_DONE      3
+#define RTS_AUTOPILOT_DONE      3 // the arm7 then asks for the exit, as the exit combo does
+#define RTS_AUTOPILOT_EXITING   4
 // the cartridge header, at the same distance from the block in both mirrors
 // (0x027FF680 -> 0x027FFE00, 0x02FFF680 -> 0x02FFFE00)
 #define HEADER_FROM_BLOCK       0x780

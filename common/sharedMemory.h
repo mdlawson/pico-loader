@@ -267,7 +267,8 @@ static_assert(sizeof(rts_autopilot_t) == 0x10);
 #define RTS_AUTOPILOT_PLAY          0 // keys from the script, then the freeze at saveFrame
 #define RTS_AUTOPILOT_SAVE          1 // frozen at saveFrame: the menu saves (test: save + reference)
 #define RTS_AUTOPILOT_LOAD          2 // frozen after the gap: the menu loads (test: load + compare)
-#define RTS_AUTOPILOT_DONE          3 // compared: the menu exits to the launcher
+#define RTS_AUTOPILOT_DONE          3 // compared: the menu resumes, and the arm7 asks for the exit
+#define RTS_AUTOPILOT_EXITING       4 // the exit asked for (as the exit combo does)
 #define RTS_AUTOPILOT_PATH          "/_pico/autotest.txt" // frame=N, gap=N, mode=full|basic; read and removed at boot
 #define RTS_AUTOPILOT_TIMING_FROM   600 // the timing window: this frame to the save
 #define RTS_AUTOPILOT_OFFSET        0x170 // from the exit request block
