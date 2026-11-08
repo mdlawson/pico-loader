@@ -206,6 +206,12 @@ int main(int argc, char** argv)
         if (const char* a = getenv("PC9_RING"); a && f == atoi(a)) melonDS::gHarness9Arm = 1;
         melonDS::Platform::gFrame = f; nds->RunFrame();
         ioprof::endFrame(f);
+        // GXLOG=path: at each frame's end (the vblank's start, where the exit combo's freeze
+        // happens), the 3d engine's status and the arm9 dma controls, one line a frame
+        if (static FILE* gx = getenv("GXLOG") ? fopen(getenv("GXLOG"), "w") : nullptr; gx)
+            fprintf(gx, "%d %08X %08X %08X %08X %08X %08X %04X\n", f, nds->ARM9Read32(0x04000600),
+                nds->ARM9Read32(0x040000B8), nds->ARM9Read32(0x040000C4), nds->ARM9Read32(0x040000D0),
+                nds->ARM9Read32(0x040000DC), nds->ARM9Read32(0x04000210), nds->ARM9Read16(0x04000006));
         if (getenv("CENSUS_STATS"))
         {
             static u32 cAddr = 0, lastTraps = 0, lastThumb = 0, lastFrame = 0;

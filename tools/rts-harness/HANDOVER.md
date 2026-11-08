@@ -200,8 +200,25 @@ Still open (`~/emu/results/sweep3_ds/triage.txt` has the list):
   (Moon, Nostalgia, DQ9 at some points). Clears by itself.
 - BG2/BG3 affine reference points sometimes come back 0 (written outside the stubs?); invisible
   where seen so far, but worth a look.
-- A save during a DMA to the geometry fifo (Dragon Quest Monsters: Joker at some points): the game
-  goes another way after the load (GX fifo irq on, different DMA3).
+- A freeze in the middle of a 3D command stream (Dragon Quest Monsters: Joker hung after such a
+  load on a DSi). 42 of 99 games are sometimes mid-stream at the vblank (`GXLOG=path` in dshost logs
+  GXSTAT and the dma controls each frame), some for hundreds of frames in a row (Chrono Trigger
+  1553), so waiting for a quiet vblank isn't an option. The menu now lets what the game started on
+  the 3D hardware finish before it takes the state (`gxDrain` in state.c: a geometry fifo dma, the
+  queued commands; bounded) and keeps the dma irqs pending then (header `timerMeasured9` bits
+  12-15), raised again on a load with a one-word dma (`dmaRaiseIf`). Not reproduced in melonDS;
+  the DSi run is the check. A command the game was half way through writing by hand still can't be
+  saved (the wait gives up and the state is as before). Confirmed on the DSi (2026-11-08): Joker's
+  run comparison went from a different game state to 2 bytes.
+- The menu's GXSTAT writes (acknowledging the matrix stack error) cleared the geometry fifo irq
+  mode (bits 30-31). Joker feeds its display lists from that irq and only ever changes the mode it
+  finds: after any menu its picture froze on a DSi (sound and the menu still going), and the exit
+  then hung. melonDS kept it running. `gxAck` keeps the mode; a load sets the state's only where
+  the running one differs (a GXSTAT write re-evaluates the irq at once, which threw Soul Bubbles
+  off). Confirmed on the DSi.
+- The shadow recorded every immediate dma into io space unit by unit, display lists to the geometry
+  fifo included: up to half of every frame in Contra 4 and Aliens. It now skips a dma whose span
+  misses the shadowed registers (`record_dma`).
 - Ninjatown, Planet Puzzle League, Elite Beat Agents (late points), Shin Megami Tensei: Strange
   Journey (late points): go their own way after a load at some points; not looked into.
 - Animal Crossing in basic mode: two points at 119 (no shadow there, so scroll/affine registers
@@ -230,7 +247,12 @@ as the sweep on a real DSpico, one boot per run, with no one pressing anything:
   freezes the game at saveFrame (counted from the game's start, not from power on as in dshost).
   No touch yet.
 - The menu (`RTS_AUTOPILOT` in rtsmenu) skips its list: save + reference at that freeze, the gap,
-  load + compare (no A to confirm), the comparison, then exit to the launcher.
+  load + compare (no A to confirm), the comparison; then it resumes the game and the arm7 asks for
+  the exit the way the exit combo does (step DONE, then EXITING).
+  Open: on a real DSi the autopilot build's "Exit to launcher" from the menu hangs in the reboot (a
+  gradient screen), even with the autopilot unarmed; the exit combo works, and so do both exits
+  with the release build (checked on the tester's DSi, 2026-11-07). The autopilot build's larger
+  arm7 patch space and code are the difference; not found in melonDS.
 
 Build and an sd card folder:
 
