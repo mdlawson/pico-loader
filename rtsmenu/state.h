@@ -102,7 +102,8 @@ typedef struct
     uint32_t timer9[4];
     uint16_t timerReload9[4];
     uint32_t timerMeasured9;    // bit per timer: timerReload9 is valid; bits 8-11 (any version 4+
-                                // file may have them): the timers' irqs pending, IF bits 3-6
+                                // file may have them): the timers' irqs pending, IF bits 3-6;
+                                // bits 12-15: the dma channels' irqs pending, IF bits 8-11
 
     // version 5: 1 when STATE_ZERO_MAP is valid
     uint32_t zeroMap;

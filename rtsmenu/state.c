@@ -53,6 +53,9 @@ static u32 sLoadTimer[4];
 static u16 sLoadTimerReload[4];
 static u32 sLoadTimerMeasured;
 static u32 sLoadTimerIf;    // the state's IF timer bits: overflows pending when it was saved
+static u32 sDmaIf;          // IF's dma bits once the game's own 3d stream has finished (gxDrain)
+static u32 sLoadDmaIf;      // the state's
+#define IF_DMAS         0xF00
 
 static int measureReload(int i, u16* reload)
 {
@@ -177,6 +180,7 @@ static void timersLeave(int loaded)
 #define GX_MTX_LOAD44   (*(vu32*)0x04000458)
 #define GXSTAT_BUSY     ((1u << 27) | (1u << 14)) // geometry engine, matrix stack
 #define GXSTAT_ERROR    (1u << 15)
+#define GXSTAT_IRQMODE  (3u << 30) // the geometry fifo's irq: never, less than half, empty
 #define POS_LEVEL(st)   (((st) >> 8) & 0x1F)
 #define PROJ_LEVEL(st)  (((st) >> 13) & 1)
 typedef int32_t s32;
@@ -189,6 +193,16 @@ typedef struct
 } gx_t;
 static gx_t sGx;        // as the menu found them
 static gx_t sLoadGx;    // the loaded state's
+static u32 sLoadGxIrqMode; // the loaded state's geometry fifo irq mode (GXSTAT 30-31)
+
+// The matrix stack error acknowledged. A write sets the fifo irq mode too: the
+// game's is kept. (Clearing it froze Dragon Quest Monsters: Joker's picture on a DSi
+// after the menu: it feeds its display lists from the empty-fifo irq, and only
+// ever changes the mode it finds.)
+static void gxAck(void)
+{
+    REG_GXSTAT = (REG_GXSTAT & GXSTAT_IRQMODE) | GXSTAT_ERROR;
+}
 
 static int gxIdle(void)
 {
@@ -229,7 +243,7 @@ static void gxSave(void)
         mode = 3;
     if (!(after & GXSTAT_ERROR))
         GX_MTX_POP = 1;
-    REG_GXSTAT = GXSTAT_ERROR; // acknowledged
+    gxAck();
     for (int i = 0; i < 9; i++)
         sGx.vec[i] = REG_VECMTX[i];
     if (mode == 2)
@@ -264,7 +278,7 @@ static void gxSave(void)
     GX_MTX_MODE = sGx.mode;
     gxIdle();
     sGx.valid = !(REG_GXSTAT & GXSTAT_ERROR);
-    REG_GXSTAT = GXSTAT_ERROR;
+    gxAck();
 }
 
 static void gxLoad(const gx_t* g)
@@ -297,13 +311,57 @@ static void gxLoad(const gx_t* g)
         GX_MTX_PUSH = 0;
     GX_MTX_MODE = g->mode;
     gxIdle();
-    REG_GXSTAT = GXSTAT_ERROR;
+    gxAck();
+}
+
+// The game froze between two of its vblank's irqs, but what it had started on the
+// 3d hardware goes on by itself: a dma feeding the geometry fifo (start timing 7),
+// and the commands queued in the fifo. Neither can be saved or started again (a
+// dma's progress and the fifo's contents don't read back), so the state is taken
+// once they are done: the game's memory says it sent them, the matrices say they
+// ran, the dma reads as finished, and its irq is pending (sDmaIf, raised again on
+// a load). A command the game was in the middle of writing never completes: the
+// waits are bounded, and such a state is as before. (Dragon Quest Monsters: Joker
+// hung after a load from a freeze in the middle of a display list.)
+static void gxDrain(void)
+{
+    for (u32 n = 0; n < 0x100000; n++)
+    {
+        int running = 0;
+        for (int ch = 0; ch < 4; ch++)
+        {
+            u32 control = *(vu32*)(0x040000B8 + ch * 12);
+            if ((control & (1u << 31)) && ((control >> 27) & 7) == 7)
+                running = 1;
+        }
+        if (!running)
+            break;
+    }
+    for (u32 n = 0; n < 0x100000 && !(REG_GXSTAT & (1u << 26)); n++) // fifo empty
+        ;
+    gxIdle(); // what the last commands started (a swap waits for the vblank)
+}
+
+// A dma channel's irq made pending the only way it can be: a one word transfer
+// with its irq on (the channel is set up again after this).
+static void dmaRaiseIf(int ch)
+{
+    static u32 word;
+    vu32* dma = (vu32*)(0x040000B0 + ch * 12);
+    dma[2] = 0;
+    dma[0] = (u32)&word;
+    dma[1] = (u32)&word;
+    dma[2] = (1u << 31) | (1u << 30) | (1u << 26) | 1; // on, irq, words, at once, one
+    for (u32 n = 0; n < 0x10000 && (dma[2] & (1u << 31)); n++)
+        ;
 }
 
 // Before the menu changes anything.
 void stateTakeIo(void)
 {
     timersStop();
+    gxDrain();
+    sDmaIf = REG_IF & IF_DMAS;
     gxSave();
     for (u32 i = 0; i < sizeof(sIoRanges) / sizeof(sIoRanges[0]); i++)
         for (u32 offset = sIoRanges[i][0]; offset < sIoRanges[i][1]; offset += 4)
@@ -631,7 +689,8 @@ static void buildHeader(state_header_t* h, void* block)
     memcpy(h->fifo7, &sFifo7[1], 16 * 4);
     memcpy(h->timer9, sTimer, sizeof(sTimer));
     memcpy(h->timerReload9, sTimerReload, sizeof(sTimerReload));
-    h->timerMeasured9 = sTimerMeasured | (sTimerIf >> 3) << 8; // bits 8-11: IF's timer bits
+    // bits 8-11: IF's timer bits; 12-15: its dma bits once the 3d stream finished
+    h->timerMeasured9 = sTimerMeasured | (sTimerIf >> 3) << 8 | (sDmaIf >> 8) << 12;
     h->mainSize = TWL_MODE ? gMainSize : 0;
 }
 
@@ -1086,6 +1145,12 @@ void stateLeave(void)
         return;
     }
     sLoaded = 0;
+    // the dma irqs the state had pending (a transfer it was waiting on finished as
+    // it froze), and none of the running session's
+    for (int ch = 0; ch < 4; ch++)
+        if ((sLoadDmaIf & (0x100u << ch)) && !(REG_IF & (0x100u << ch)))
+            dmaRaiseIf(ch);
+    REG_IF = REG_IF & IF_DMAS & ~sLoadDmaIf;
     for (int ch = 0; ch < 4; ch++)
     {
         vu32* dma = (vu32*)(0x040000B0 + ch * 12);
@@ -1106,6 +1171,12 @@ void stateLeave(void)
         dma[2] = control;
     }
     gxLoad(&sLoadGx);
+    // The state's fifo irq mode, only where the running session's isn't the same: a
+    // GXSTAT write re-evaluates the fifo irq at once, which a session that just goes
+    // on doesn't (Soul Bubbles took another way). A different one (another scene's,
+    // or none) would leave a game that feeds the fifo from that irq waiting.
+    if ((REG_GXSTAT & GXSTAT_IRQMODE) != sLoadGxIrqMode)
+        REG_GXSTAT = sLoadGxIrqMode; // no error to acknowledge
     shadowLeave();
     timersLeave(1);
     if (gCheckOnLeave)
@@ -1356,12 +1427,14 @@ static const char* load(void* block, void (*progress)(u32 done, u32 total), int*
     for (int ch = 0; ch < 4; ch++)
         for (int i = 0; i < 3; i++)
             sDma[ch][i] = *(u32*)(__scratch + 0xB0 + ch * 12 + i * 4);
+    sLoadGxIrqMode = *(u32*)(__scratch + 0x600) & GXSTAT_IRQMODE;
     // timers: as the menu leaves; older states have no reloads
     for (int i = 0; i < 4; i++)
         sLoadTimer[i] = h->version >= 4 ? h->timer9[i] : *(u32*)(__scratch + 0x100 + i * 4);
     memcpy(sLoadTimerReload, h->timerReload9, sizeof(sLoadTimerReload));
     sLoadTimerMeasured = h->version >= 4 ? h->timerMeasured9 & 0xF : 0;
     sLoadTimerIf = h->version >= 4 ? (h->timerMeasured9 >> 8 & 0xF) << 3 : 0;
+    sLoadDmaIf = h->version >= 4 ? (h->timerMeasured9 >> 12 & 0xF) << 8 : 0;
     sLoaded = 1;
     // the loaded session's fifo words replace the running one's
     sFifo9[0] = h->fifo9Count <= 16 ? h->fifo9Count : 0;
