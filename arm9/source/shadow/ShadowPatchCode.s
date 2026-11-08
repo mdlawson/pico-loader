@@ -672,6 +672,36 @@ record_dma:
     movne r9, r7
     cmp r3, #2
     moveq r9, #0
+    // Nothing it writes on a shadowed register: nothing to record. The sdk sends
+    // display lists to the geometry fifo this way (MI_SendGXCommand: thousands of
+    // words a frame to one address), and walking them all cost Contra 4 and Aliens
+    // half of every frame. The span, as offsets from 0x04000000 (signed): r2 to r3.
+    mul r0, r6, r8
+    add r1, r5, r0 // the far end
+    cmp r1, r5
+    movlt r2, r1
+    movge r2, r5
+    movlt r3, r5
+    movge r3, r1
+    add r3, r3, r7
+    sub r2, r2, #0x04000000
+    sub r3, r3, #0x04000000
+    cmp r2, #0x58 // engine a: 0x10-0x58
+    bge 2f
+    cmp r3, #0x10
+    bgt 1f
+2:
+    cmp r2, #0x3C0 // 3d: 0x330-0x3c0
+    bge 3f
+    cmp r3, #0x330
+    bgt 1f
+3:
+    sub r2, r2, #0x1000 // engine b: 0x1010-0x1058
+    sub r3, r3, #0x1000
+    cmp r2, #0x58
+    bge 9f
+    cmp r3, #0x10
+    ble 9f
 1:
     cmp r7, #4
     ldreq r0, [r4]
