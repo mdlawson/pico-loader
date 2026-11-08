@@ -242,6 +242,13 @@ copied:
     sub r3, r5, #0x04000000
     cmp r3, #0x2000
     bhs 9f
+    // nothing it wrote on a shadowed register: nothing to record (a copy to the
+    // geometry fifo walked a byte at a time cost Clash of Heroes an eighth of
+    // every frame)
+    mov r2, r3
+    add r3, r3, r6
+    bl span_hits
+    beq 9f
     cmp r6, #0x400
     movhi r6, #0x400
     cmp r7, #0
@@ -637,6 +644,33 @@ record_io:
     bne 1b
     bx lr
 
+// r2 = a span's start, r3 its end (exclusive), as signed offsets from 0x04000000:
+// ne when it touches a register the shadow keeps (as record_io's ranges), eq when
+// not. Uses r2, r3.
+span_hits:
+    cmp r2, #0x58 // engine a: 0x10-0x58
+    bge 2f
+    cmp r3, #0x10
+    bgt 8f
+2:
+    cmp r2, #0x3C0 // 3d: 0x330-0x3c0
+    bge 3f
+    cmp r3, #0x330
+    bgt 8f
+3:
+    sub r2, r2, #0x1000 // engine b: 0x1010-0x1058
+    sub r3, r3, #0x1000
+    cmp r2, #0x58
+    bge 7f
+    cmp r3, #0x10
+    bgt 8f
+7:
+    movs r2, #0
+    bx lr
+8:
+    movs r2, #1
+    bx lr
+
 // r0 = the control word, r1 = its address: the source and destination read
 // back on the arm9. Each unit the dma writes into the io pages goes through
 // record_io, at most 0x400 of them. Uses r0-r3, r12.
@@ -686,22 +720,8 @@ record_dma:
     add r3, r3, r7
     sub r2, r2, #0x04000000
     sub r3, r3, #0x04000000
-    cmp r2, #0x58 // engine a: 0x10-0x58
-    bge 2f
-    cmp r3, #0x10
-    bgt 1f
-2:
-    cmp r2, #0x3C0 // 3d: 0x330-0x3c0
-    bge 3f
-    cmp r3, #0x330
-    bgt 1f
-3:
-    sub r2, r2, #0x1000 // engine b: 0x1010-0x1058
-    sub r3, r3, #0x1000
-    cmp r2, #0x58
-    bge 9f
-    cmp r3, #0x10
-    ble 9f
+    bl span_hits
+    beq 9f
 1:
     cmp r7, #4
     ldreq r0, [r4]
